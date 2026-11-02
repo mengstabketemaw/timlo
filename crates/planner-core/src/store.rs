@@ -548,6 +548,24 @@ impl Store {
             .optional()?)
     }
 
+    /// Days that exist in `from..=to`, oldest first.
+    pub fn days_in_range(&self, from: NaiveDate, to: NaiveDate) -> Result<Vec<Day>> {
+        let mut st = self.conn.prepare(
+            "SELECT date, template_id, customised, overridden FROM days
+             WHERE deleted = 0 AND date >= ?1 AND date <= ?2 ORDER BY date",
+        )?;
+        let rows = st
+            .query_map(params![date_key(from), date_key(to)], |r| {
+                Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(d, template_id, customised, overridden)| {
+                Ok(Day { date: parse_date_key(&d)?, template_id, customised, overridden })
+            })
+            .collect()
+    }
+
     /// Get a day, creating it from the weekly default the first time a date
     /// is opened or reached. Past dates that were never created get an empty
     /// plan, so they don't show up as a day of missed blocks.

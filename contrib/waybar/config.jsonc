@@ -5,7 +5,7 @@
     "return-type": "json",
     "restart-interval": 5,
     "tooltip": true,
-    "on-click": "plannerd show",
+    "on-click": "timlo",
     "on-click-right": "plannerd done",
     "on-click-middle": "plannerd skip"
 }

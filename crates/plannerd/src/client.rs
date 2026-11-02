@@ -10,14 +10,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::{paths, waybar};
+use planner_core::paths;
 
-/// Ask the daemon to re-read the database. Does nothing if it isn't running.
-pub fn poke() {
-    if let Ok(mut s) = UnixStream::connect(paths::socket_path()) {
-        let _ = s.write_all(b"refresh\n");
-    }
-}
+use crate::waybar;
+
+pub use planner_core::paths::poke_daemon as poke;
 
 fn emit(line: &str) -> bool {
     let mut out = std::io::stdout().lock();

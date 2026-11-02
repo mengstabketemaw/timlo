@@ -16,7 +16,11 @@ use chrono::{Local, NaiveDate, NaiveDateTime, Timelike};
 use planner_core::time::minute_of;
 use planner_core::{reminders, Settings, Status, Store};
 
-use crate::{notify, paths, waybar};
+use planner_core::paths;
+
+use crate::{notify, waybar};
+
+const PLAN_MTIME_KEY: &str = "plan_file_mtime";
 
 pub enum Msg {
     Subscribe(UnixStream),
@@ -52,14 +56,13 @@ pub fn run() -> Result<()> {
         sock.display()
     );
 
-    let mut plan_mtime: Option<SystemTime> = None;
     let mut subs: Vec<UnixStream> = Vec::new();
     let mut last_line = String::new();
     let mut last_tick: Option<(NaiveDate, u16)> = None;
 
     loop {
         let now = Local::now().naive_local();
-        reload_plan(&store, &plan, &mut plan_mtime, now);
+        reload_plan(&store, &plan, now);
         match tick(&store, now, &mut last_tick, &tx) {
             Ok(line) if line != last_line => {
                 subs.retain_mut(|s| writeln!(s, "{line}").is_ok());
@@ -118,19 +121,27 @@ fn tick(
     Ok(serde_json::to_string(&out)?)
 }
 
-fn reload_plan(store: &Store, path: &Path, mtime: &mut Option<SystemTime>, now: NaiveDateTime) {
+/// Import the plan file when it changed since the last import (tracked in
+/// the database, so a restart doesn't overwrite edits made in the app).
+fn reload_plan(store: &Store, path: &Path, now: NaiveDateTime) {
     let Ok(meta) = fs::metadata(path) else { return };
-    let modified = meta.modified().ok();
-    if modified == *mtime {
+    let stamp = match meta.modified().ok().and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok()) {
+        Some(d) => d.as_nanos().to_string(),
+        None => return,
+    };
+    if store.setting(PLAN_MTIME_KEY).ok().flatten().as_deref() == Some(stamp.as_str()) {
         return;
     }
-    *mtime = modified;
     match crate::import_file(store, path, now) {
         Ok(r) => eprintln!("plannerd: loaded {} ({} templates, {} blocks)", path.display(), r.templates, r.blocks),
         Err(e) => {
             eprintln!("plannerd: {}: {e:#}", path.display());
             notify::plain("Plan file not loaded", &format!("{e:#}"));
         }
+    }
+    // Recorded on failure too, so a broken file is reported once per save.
+    if let Err(e) = store.set_setting(PLAN_MTIME_KEY, &stamp) {
+        eprintln!("plannerd: {e:#}");
     }
 }
 

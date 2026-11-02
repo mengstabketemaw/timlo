@@ -9,7 +9,6 @@ macro_rules! outln {
 mod client;
 mod daemon;
 mod notify;
-mod paths;
 mod waybar;
 
 use std::fs;
@@ -19,6 +18,7 @@ use anyhow::{bail, Context, Result};
 use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{Parser, Subcommand};
 use planner_core::now::action_target;
+use planner_core::paths;
 use planner_core::plan_file::{self, ImportReport};
 use planner_core::store::weekday_num;
 use planner_core::time::{fmt_hm, minute_of};

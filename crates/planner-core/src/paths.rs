@@ -26,3 +26,15 @@ pub fn socket_path() -> PathBuf {
         dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("timlo-plannerd.sock")
     })
 }
+
+/// Ask a running `plannerd` to re-read the database (so Waybar updates at
+/// once after a change). Does nothing if it isn't running.
+pub fn poke_daemon() {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        if let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket_path()) {
+            let _ = s.write_all(b"refresh\n");
+        }
+    }
+}

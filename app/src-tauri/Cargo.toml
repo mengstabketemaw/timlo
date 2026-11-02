@@ -1,0 +1,27 @@
+[package]
+name = "timlo-app"
+description = "timlo planner app (Tauri) for Linux and Android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "timlo_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "timlo"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+planner-core = { path = "../../crates/planner-core" }
+serde.workspace = true
+tauri = { version = "2", features = [] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"

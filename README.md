@@ -3,14 +3,15 @@
 A personal day planner that always shows what you should be doing right now.
 Spec: [Day Planner — Spec](https://claude.ai/artifact/A7GszREJWzERksYrkiRSSr).
 
-This repo has milestones 1–2:
+This repo has milestones 1–3:
 
-| Crate | What it is |
+| Part | What it is |
 | --- | --- |
 | `crates/planner-core` | Shared logic: data model, template → day rules, now/next, reminders, settings, SQLite storage, plan-file import. |
 | `crates/plannerd` | Linux background service + CLI: Waybar module, desktop notifications, Done/Skip clicks. |
+| `app/` | Planner app (Tauri 2 + Svelte): Today, Templates, Week and Calendar screens. Same database as `plannerd`. |
 
-The Tauri planner UI, Supabase sync, Android and summaries come in later milestones.
+Supabase sync, Android and summaries come in later milestones.
 
 ## Install (Arch / Hyprland)
 
@@ -29,14 +30,31 @@ under uwsm), change `WantedBy=` in the unit to `default.target`, or add
 Then add the module from `contrib/waybar/config.jsonc` to your Waybar config
 and, optionally, the classes in `contrib/waybar/style.css`.
 
+### Planner app
+
+```sh
+cd app && npm install && npx tauri build --no-bundle
+install -Dm755 ../target/release/timlo ~/.local/bin/timlo
+```
+
+Left-clicking the Waybar module runs `timlo`; a second launch focuses the
+open window. To get a floating popup under Waybar instead of a tiled window,
+add the rules in `contrib/hyprland.conf`. For development: `cd app && npx tauri dev`.
+
 ## Using it
 
-Edit `~/.config/timlo/plan.toml` and save; the daemon reloads it within a
-minute and sends a notification if it can't parse it.
+Plan in the app: build templates, pick each weekday's default, and switch or
+edit single days from Today or the Calendar.
+
+The plan file `~/.config/timlo/plan.toml` still works: when you save it, the
+daemon imports it within a minute (templates are matched by name). It is only
+re-read when the file changes, so restarting the daemon never overwrites edits
+made in the app; but saving the file again does overwrite the templates it
+names.
 
 | Waybar | Action |
 | --- | --- |
-| Left click | Today's plan as a notification (the planner UI comes in milestone 3) |
+| Left click | Open the planner app |
 | Right click | Mark the current block Done |
 | Middle click | Mark the current block Skipped |
 
@@ -44,6 +62,7 @@ In a gap, Done/Skip apply to the most recent block that ended without an answer.
 
 ```text
 plannerd today [--date 2026-11-03]   print a day's plan
+plannerd show                        today's plan as a notification
 plannerd switch "Rest day" [--date]  run a day from another template
 plannerd templates                   list templates and weekday defaults
 plannerd done | skip                 same as the Waybar clicks
@@ -71,5 +90,7 @@ Files: database `~/.local/share/timlo/planner.db`, plan
 ## Development
 
 ```sh
-cargo test
+cargo test                      # Rust: core + daemon
+cd app && npm run check         # Svelte/TypeScript
+cd app && npx tauri dev         # run the app with hot reload
 ```
