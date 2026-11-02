@@ -11,5 +11,7 @@ chrono.workspace = true
 clap.workspace = true
 notify-rust.workspace = true
 planner-core = { path = "../planner-core" }
+planner-sync = { path = "../planner-sync" }
+rpassword.workspace = true
 serde.workspace = true
 serde_json.workspace = true

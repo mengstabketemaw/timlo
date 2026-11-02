@@ -9,6 +9,7 @@ macro_rules! outln {
 mod client;
 mod daemon;
 mod notify;
+mod sync_cmd;
 mod waybar;
 
 use std::fs;
@@ -68,6 +69,26 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Sign in to Supabase and start syncing (first time: --url and --key)
+    Login {
+        /// Project URL, e.g. https://abcd1234.supabase.co
+        #[arg(long)]
+        url: Option<String>,
+        /// The project's anon public key
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        email: Option<String>,
+        /// Create the account instead of signing in
+        #[arg(long)]
+        signup: bool,
+    },
+    /// Stop syncing on this device (plans stay local)
+    Logout,
+    /// Push and pull now
+    Sync,
+    /// Show sync account and progress
+    SyncStatus,
 }
 
 fn main() -> Result<()> {
@@ -93,6 +114,10 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Init { force } => init(force),
+        Cmd::Login { url, key, email, signup } => sync_cmd::login(&open()?, url, key, email, signup),
+        Cmd::Logout => sync_cmd::logout(),
+        Cmd::Sync => sync_cmd::sync_now(&open()?),
+        Cmd::SyncStatus => sync_cmd::status(&open()?),
     }
 }
 

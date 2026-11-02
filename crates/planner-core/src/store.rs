@@ -107,10 +107,10 @@ const TB_COLS: &str = "id, template_id, start_min, end_min, title, note, icon, c
 const DB_COLS: &str = "id, date, template_block_id, start_min, end_min, title, note, status, status_at";
 
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
-fn stamp() -> i64 {
+pub(crate) fn stamp() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
@@ -192,6 +192,7 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch(SCHEMA).context("creating schema")?;
+        conn.execute_batch(&crate::sync::schema_sql()).context("creating sync tables")?;
         Ok(Self { conn })
     }
 
@@ -449,7 +450,7 @@ impl Store {
         for d in dates {
             let date = parse_date_key(&d)?;
             let cutoff = if date == today { minute_of(&now) } else { 0 };
-            self.rebuild_day(date, Some(template_id), cutoff)?;
+            self.rebuild_day(date, Some(template_id), cutoff, stamp())?;
         }
         Ok(())
     }
@@ -518,7 +519,7 @@ impl Store {
         for (d, current) in days {
             let date = parse_date_key(&d)?;
             if weekday_num(date) == weekday && current.as_deref() != template_id {
-                self.rebuild_day(date, template_id, 0)?;
+                self.rebuild_day(date, template_id, 0, ts)?;
                 self.conn.execute(
                     "UPDATE days SET template_id = ?2, updated_at = ?3 WHERE date = ?1",
                     params![d, template_id, ts],
@@ -586,10 +587,10 @@ impl Store {
              VALUES (?1, ?2, 0, 0, ?3, 0)
              ON CONFLICT(date) DO UPDATE SET template_id = excluded.template_id, customised = 0,
                 overridden = 0, updated_at = excluded.updated_at, deleted = 0",
-            params![date_key(date), tid, stamp()],
+            params![date_key(date), tid, 0],
         )?;
         if date >= now.date() {
-            self.rebuild_day(date, tid.as_deref(), 0)?;
+            self.rebuild_day(date, tid.as_deref(), 0, 0)?;
         }
         Ok(Day { date, template_id: tid, customised: false, overridden: false })
     }
@@ -617,7 +618,11 @@ impl Store {
     /// `cutoff` (minutes) are kept as they are; everything after is replaced.
     /// A new block that starts before the cutoff is clipped so it never
     /// overlaps a kept block.
-    fn rebuild_day(&self, date: NaiveDate, template_id: Option<&str>, cutoff: u16) -> Result<()> {
+    ///
+    /// `ts` is the rows' `updated_at`. A day copied from its template for the
+    /// first time uses 0: every device makes the same copy, so it must never
+    /// win over a real change (a Done/Skip) synced from another device.
+    fn rebuild_day(&self, date: NaiveDate, template_id: Option<&str>, cutoff: u16, ts: i64) -> Result<()> {
         let existing = self.day_blocks(date)?;
         let kept: Vec<&DayBlock> = existing.iter().filter(|b| b.end_min <= cutoff).collect();
         let kept_ids: HashSet<&str> = kept.iter().map(|b| b.id.as_str()).collect();
@@ -625,7 +630,6 @@ impl Store {
             Some(t) => self.template_blocks(t)?,
             None => Vec::new(),
         };
-        let ts = stamp();
         let dk = date_key(date);
         let mut written = HashSet::new();
         for tb in &tblocks {
@@ -683,7 +687,7 @@ impl Store {
             }
             s.ensure_day_in(date, now)?;
             let cutoff = if date == today { minute_of(&now) } else { 0 };
-            s.rebuild_day(date, template_id, cutoff)?;
+            s.rebuild_day(date, template_id, cutoff, stamp())?;
             let default = s.week_assignment()?[(weekday_num(date) - 1) as usize].clone();
             let overridden = default.as_deref() != template_id;
             s.conn.execute(
@@ -777,12 +781,16 @@ impl Store {
     }
 
     /// Turn pending blocks that have ended into Missed. Returns how many.
+    ///
+    /// `updated_at` is left alone: every device works Missed out for itself,
+    /// so it must not beat a Done/Skip made earlier on another device that
+    /// hasn't synced yet.
     pub fn mark_missed(&self, now: NaiveDateTime) -> Result<usize> {
         Ok(self.conn.execute(
-            "UPDATE day_blocks SET status = 'missed', updated_at = ?3
+            "UPDATE day_blocks SET status = 'missed'
              WHERE deleted = 0 AND status = 'pending'
                AND (date < ?1 OR (date = ?1 AND end_min <= ?2))",
-            params![date_key(now.date()), minute_of(&now), stamp()],
+            params![date_key(now.date()), minute_of(&now)],
         )?)
     }
 

@@ -7,6 +7,7 @@
 //! - [`reminders`]: which reminders are due in a minute window.
 //! - [`settings`]: reminder timing, quiet hours.
 //! - [`paths`]: database, plan file and daemon socket locations.
+//! - [`sync`]: outbox of local changes and last-write-wins merge of pulled rows.
 //! - [`plan_file`]: the hand-edited TOML plan file (milestone 2).
 
 pub mod model;
@@ -16,6 +17,7 @@ pub mod plan_file;
 pub mod reminders;
 pub mod settings;
 pub mod store;
+pub mod sync;
 pub mod time;
 
 pub use model::{BlockInput, Day, DayBlock, Status, Template, TemplateBlock};

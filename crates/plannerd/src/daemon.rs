@@ -15,12 +15,15 @@ use anyhow::{bail, Context, Result};
 use chrono::{Local, NaiveDate, NaiveDateTime, Timelike};
 use planner_core::time::minute_of;
 use planner_core::{reminders, Settings, Status, Store};
+use planner_sync::config::session_path;
+use planner_sync::SyncEvent;
 
 use planner_core::paths;
 
 use crate::{notify, waybar};
 
-const PLAN_MTIME_KEY: &str = "plan_file_mtime";
+// `local.` keys stay on this device (never synced).
+const PLAN_MTIME_KEY: &str = "local.plan_file_mtime";
 
 pub enum Msg {
     Subscribe(UnixStream),
@@ -59,10 +62,26 @@ pub fn run() -> Result<()> {
     let mut subs: Vec<UnixStream> = Vec::new();
     let mut last_line = String::new();
     let mut last_tick: Option<(NaiveDate, u16)> = None;
+    let mut sync: Option<Sender<SyncEvent>> = None;
+    let mut sync_error = String::new();
 
     loop {
         let now = Local::now().naive_local();
         reload_plan(&store, &plan, now);
+        // Start syncing once logged in (`plannerd login` may run later).
+        if sync.is_none() && session_path().exists() {
+            let tx = tx.clone();
+            match planner_sync::start(db.clone(), move || drop(tx.send(Msg::Refresh))) {
+                Ok(s) => sync = s,
+                Err(e) => {
+                    let msg = format!("{e:#}");
+                    if msg != sync_error {
+                        eprintln!("plannerd: sync not started: {msg}");
+                        sync_error = msg;
+                    }
+                }
+            }
+        }
         match tick(&store, now, &mut last_tick, &tx) {
             Ok(line) if line != last_line => {
                 subs.retain_mut(|s| writeln!(s, "{line}").is_ok());
@@ -70,6 +89,10 @@ pub fn run() -> Result<()> {
             }
             Ok(_) => {}
             Err(e) => eprintln!("plannerd: {e:#}"),
+        }
+        // Push anything written since the last pass, by us or another process.
+        if let Some(s) = &sync {
+            let _ = s.send(SyncEvent::Local);
         }
 
         let into_minute = now.second() as u64 * 1000 + (now.nanosecond() / 1_000_000).min(999) as u64;

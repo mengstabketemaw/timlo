@@ -1,0 +1,17 @@
+[package]
+name = "planner-sync"
+description = "Supabase sync for the day planner: login, push/pull, Realtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+planner-core = { path = "../planner-core" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tungstenite.workspace = true
+ureq.workspace = true

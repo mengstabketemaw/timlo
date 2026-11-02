@@ -3,15 +3,17 @@
 A personal day planner that always shows what you should be doing right now.
 Spec: [Day Planner — Spec](https://claude.ai/artifact/A7GszREJWzERksYrkiRSSr).
 
-This repo has milestones 1–3:
+This repo has milestones 1–4:
 
 | Part | What it is |
 | --- | --- |
 | `crates/planner-core` | Shared logic: data model, template → day rules, now/next, reminders, settings, SQLite storage, plan-file import. |
 | `crates/plannerd` | Linux background service + CLI: Waybar module, desktop notifications, Done/Skip clicks. |
+| `crates/planner-sync` | Supabase sync: login, push/pull, Realtime. Run by `plannerd`. |
 | `app/` | Planner app (Tauri 2 + Svelte): Today, Templates, Week and Calendar screens. Same database as `plannerd`. |
+| `supabase/schema.sql` | Tables, row-level security and Realtime setup for the Supabase project. |
 
-Supabase sync, Android and summaries come in later milestones.
+Android and summaries come in later milestones.
 
 ## Install (Arch / Hyprland)
 
@@ -40,6 +42,35 @@ install -Dm755 ../target/release/timlo ~/.local/bin/timlo
 Left-clicking the Waybar module runs `timlo`; a second launch focuses the
 open window. To get a floating popup under Waybar instead of a tiled window,
 add the rules in `contrib/hyprland.conf`. For development: `cd app && npx tauri dev`.
+
+### Sync (Supabase)
+
+1. Create a project at [supabase.com](https://supabase.com) (free tier).
+2. SQL Editor → New query → paste `supabase/schema.sql` → Run.
+3. Optional, for a single-user setup: Authentication → Sign In / Providers →
+   Email → turn off "Confirm email" (otherwise click the link it sends).
+4. Project Settings → API: copy the Project URL and the anon public key, then:
+
+```sh
+plannerd login --signup --url https://<project>.supabase.co --key <anon key>   # first device
+plannerd login                                                               # later logins
+```
+
+The first login on a device sends all local plans up and pulls everything
+down. After that, the running `plannerd` pushes each change as it happens,
+hears about the other device's changes through Realtime, and does a catch-up
+pull on start and every 15 minutes. Offline, everything keeps working from the
+local database and queued changes go out when the connection is back.
+
+Conflicts: last write wins per row. Copying a template into a new day and
+marking blocks Missed don't count as writes, so they never override a
+Done/Skip from the other device.
+
+```text
+plannerd sync-status   account, queued changes, last change received
+plannerd sync          push and pull now
+plannerd logout        stop syncing on this device
+```
 
 ## Using it
 
