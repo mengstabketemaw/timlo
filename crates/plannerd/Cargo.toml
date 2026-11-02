@@ -1,0 +1,16 @@
+[package]
+name = "plannerd"
+description = "Day planner background service, Waybar module and CLI for Hyprland"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+dirs.workspace = true
+notify-rust.workspace = true
+planner-core = { path = "../planner-core" }
+serde.workspace = true
+serde_json.workspace = true

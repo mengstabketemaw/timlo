@@ -1,0 +1,12 @@
+[Unit]
+Description=timlo day planner (reminders + Waybar module)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.cargo/bin/plannerd daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

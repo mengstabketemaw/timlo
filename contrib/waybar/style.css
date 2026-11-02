@@ -1,0 +1,18 @@
+/* Example styles for the planner module; paste into ~/.config/waybar/style.css. */
+#custom-planner {
+    padding: 0 10px;
+}
+#custom-planner.ending-soon {
+    color: #f5a97f;
+}
+#custom-planner.free {
+    color: #8bd5ca;
+}
+#custom-planner.done {
+    color: #a6da95;
+}
+#custom-planner.skipped,
+#custom-planner.empty,
+#custom-planner.offline {
+    color: #6e738d;
+}

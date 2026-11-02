@@ -1,0 +1,11 @@
+// Add "custom/planner" to modules-left/center/right, then paste this block
+// into your Waybar config.
+"custom/planner": {
+    "exec": "plannerd waybar",
+    "return-type": "json",
+    "restart-interval": 5,
+    "tooltip": true,
+    "on-click": "plannerd show",
+    "on-click-right": "plannerd done",
+    "on-click-middle": "plannerd skip"
+}

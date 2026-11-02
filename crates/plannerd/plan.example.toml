@@ -1,0 +1,46 @@
+# timlo day planner — plan file
+#
+# Edit and save: plannerd reloads it automatically.
+# Times are HH:MM in local time. Blocks in a template may not overlap and must
+# end by 24:00.
+
+[settings]
+remind_start = true          # "Now: Study (07:00–08:00)"
+remind_before_start = 5      # "Gym in 5 min"; minutes, 0 = off
+remind_before_end = 0        # "Study ends in 5 min — next: Gym"; minutes, 0 = off
+remind_unfinished = true     # "Did you finish Study?" with Done / Skip
+ending_soon = 5              # Waybar gets the `ending-soon` class at this many minutes left
+quiet_hours = "23:00-07:00"  # no sound or pop-ups; "" = off
+sound = true
+
+# Default template per weekday. Keys: mon … sun, ranges ("mon-fri") or lists ("sat,sun").
+[week]
+"mon-fri" = "Workday"
+sat = "Weekend"
+sun = "Rest day"
+
+[[templates]]
+name = "Workday"
+blocks = [
+  { start = "07:00", end = "08:00", title = "Study" },
+  { start = "08:30", end = "12:30", title = "Work" },
+  { start = "12:30", end = "13:30", title = "Lunch" },
+  { start = "13:30", end = "17:30", title = "Work (afternoon)" },
+  { start = "18:00", end = "19:00", title = "Gym" },
+  { start = "21:00", end = "22:00", title = "Reading" },
+]
+
+[[templates]]
+name = "Weekend"
+blocks = [
+  { start = "09:00", end = "10:00", title = "Breakfast" },
+  { start = "10:00", end = "12:00", title = "Side project" },
+  { start = "16:00", end = "17:00", title = "Gym" },
+]
+
+[[templates]]
+name = "Rest day"
+blocks = [
+  { start = "10:00", end = "11:00", title = "Walk" },
+  { start = "20:00", end = "21:00", title = "Plan the week" },
+]
