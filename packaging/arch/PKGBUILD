@@ -1,0 +1,54 @@
+# Maintainer: mengstabketemaw
+# Builds from this checkout: `cd packaging/arch && makepkg -si`.
+# For the AUR, point `source` at a release tarball and add its checksum.
+pkgname=timlo
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Day planner: Waybar module, desktop reminders and a planner app, synced with your phone"
+arch=('x86_64' 'aarch64')
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'libnotify' 'gcc-libs' 'glibc')
+makedepends=('cargo' 'nodejs' 'npm')
+optdepends=('waybar: the status bar module'
+            'hyprland: floating popup window rules (see /usr/share/doc/timlo)')
+options=('!lto')
+install=timlo.install
+source=()
+sha256sums=()
+
+_src() { echo "$startdir/../.."; }
+
+prepare() {
+  cd "$(_src)"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+  (cd app && npm ci --prefer-offline --no-audit --no-fund)
+}
+
+build() {
+  cd "$(_src)"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked -p plannerd
+  (cd app && npx tauri build --no-bundle -- --locked)
+}
+
+check() {
+  cd "$(_src)"
+  CARGO_TARGET_DIR="$srcdir/target" cargo test --release --locked -p planner-core -p planner-sync -p plannerd
+}
+
+package() {
+  cd "$(_src)"
+  install -Dm755 "$srcdir/target/release/plannerd" "$pkgdir/usr/bin/plannerd"
+  install -Dm755 "$srcdir/target/release/timlo" "$pkgdir/usr/bin/timlo"
+  install -Dm644 contrib/timlo.desktop "$pkgdir/usr/share/applications/timlo.desktop"
+  install -Dm644 app/app-icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/timlo.svg"
+  install -Dm644 app/src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/timlo.png"
+  # The user unit, pointing at the packaged binary.
+  sed 's|%h/.cargo/bin/plannerd|/usr/bin/plannerd|' contrib/systemd/plannerd.service \
+    | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/plannerd.service"
+  install -Dm644 crates/plannerd/plan.example.toml "$pkgdir/usr/share/doc/timlo/plan.example.toml"
+  install -Dm644 contrib/waybar/config.jsonc "$pkgdir/usr/share/doc/timlo/waybar/config.jsonc"
+  install -Dm644 contrib/waybar/style.css "$pkgdir/usr/share/doc/timlo/waybar/style.css"
+  install -Dm644 contrib/hyprland.conf "$pkgdir/usr/share/doc/timlo/hyprland.conf"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/timlo/README.md"
+}

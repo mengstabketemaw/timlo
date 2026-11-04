@@ -3,13 +3,15 @@
   import Templates from './lib/Templates.svelte'
   import Week from './lib/Week.svelte'
   import Calendar from './lib/Calendar.svelte'
+  import SettingsView from './lib/Settings.svelte'
 
-  type Tab = 'today' | 'templates' | 'week' | 'calendar'
+  type Tab = 'today' | 'templates' | 'week' | 'calendar' | 'settings'
   const tabs: [Tab, string][] = [
     ['today', 'Today'],
     ['templates', 'Templates'],
     ['week', 'Week'],
     ['calendar', 'Calendar'],
+    ['settings', 'Settings'],
   ]
   let tab = $state<Tab>('today')
 
@@ -41,8 +43,10 @@
     <Templates />
   {:else if tab === 'week'}
     <Week />
-  {:else}
+  {:else if tab === 'calendar'}
     <Calendar refreshKey={tick} />
+  {:else}
+    <SettingsView />
   {/if}
 </main>
 

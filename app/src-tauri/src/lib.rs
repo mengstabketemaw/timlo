@@ -1,5 +1,10 @@
-//! Tauri backend: thin commands over `planner-core`. Every write pokes
-//! `plannerd` so Waybar and reminders pick up the change at once.
+//! Tauri backend: thin commands over `planner-core`. Every write tells the
+//! background piece (`plannerd` on Linux, the service on Android) so the
+//! bar, notification and reminders pick up the change at once.
+
+#[cfg(target_os = "android")]
+mod android;
+pub mod phone;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -7,7 +12,9 @@ use std::sync::Mutex;
 use chrono::{Local, NaiveDate, NaiveDateTime};
 use planner_core::store::weekday_num;
 use planner_core::time::minute_of;
-use planner_core::{paths, BlockInput, DayBlock, Status, Store, Template, TemplateBlock};
+use planner_core::settings::{fmt_quiet_hours, parse_quiet_hours};
+use planner_core::{paths, BlockInput, DayBlock, Settings, Status, Store, Template, TemplateBlock};
+use planner_sync::{LoginOutcome, SyncConfig};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
@@ -29,10 +36,18 @@ fn with_store<T>(state: &State<AppState>, f: impl FnOnce(&Store) -> anyhow::Resu
     f(&store).map_err(|e| format!("{e:#}"))
 }
 
-/// Like `with_store`, then tell the daemon something changed.
+/// Something changed in the database.
+fn changed() {
+    #[cfg(target_os = "android")]
+    android::changed();
+    #[cfg(not(target_os = "android"))]
+    paths::poke_daemon();
+}
+
+/// Like `with_store`, then tell the background piece something changed.
 fn write<T>(state: &State<AppState>, f: impl FnOnce(&Store) -> anyhow::Result<T>) -> CmdResult<T> {
     let out = with_store(state, f)?;
-    paths::poke_daemon();
+    changed();
     Ok(out)
 }
 
@@ -75,6 +90,32 @@ struct DayDto {
     /// Minute of the day, only for today.
     now_min: Option<u16>,
     blocks: Vec<DayBlock>,
+    /// Icon and colour of each block, from the template block it was copied
+    /// from (keyed by day block id; blocks added by hand have none).
+    looks: HashMap<String, Look>,
+}
+
+#[derive(Serialize)]
+struct Look {
+    icon: Option<String>,
+    colour: Option<String>,
+}
+
+fn looks(s: &Store, blocks: &[DayBlock]) -> anyhow::Result<HashMap<String, Look>> {
+    let mut by_template_block = HashMap::new();
+    for t in s.templates()? {
+        for tb in s.template_blocks(&t.id)? {
+            by_template_block.insert(tb.id.clone(), tb);
+        }
+    }
+    Ok(blocks
+        .iter()
+        .filter_map(|b| {
+            let tb = by_template_block.get(b.template_block_id.as_deref()?)?;
+            (tb.icon.is_some() || tb.colour.is_some())
+                .then(|| (b.id.clone(), Look { icon: tb.icon.clone(), colour: tb.colour.clone() }))
+        })
+        .collect())
 }
 
 #[derive(Serialize)]
@@ -128,6 +169,7 @@ fn get_day(state: State<AppState>, date: Option<String>) -> CmdResult<DayDto> {
             is_today: date == now.date(),
             is_past: date < now.date(),
             now_min: (date == now.date()).then(|| minute_of(&now)),
+            looks: looks(s, &blocks)?,
             blocks,
         })
     })
@@ -278,6 +320,169 @@ fn set_week(state: State<AppState>, weekday: u8, template_id: Option<String>) ->
     write(&state, |s| s.set_week_assignment(weekday, template_id.as_deref(), now()))
 }
 
+// ---- Settings ------------------------------------------------------------
+
+#[derive(Serialize, Deserialize)]
+struct SettingsDto {
+    remind_start: bool,
+    remind_before_start: u16,
+    remind_before_end: u16,
+    remind_unfinished: bool,
+    ending_soon: u16,
+    /// `"23:00-07:00"`, or empty for none.
+    quiet_hours: String,
+    sound: bool,
+    /// Desktop only, per device: hide the window when it loses focus.
+    hide_on_blur: bool,
+}
+
+/// `local.` = this device only, never synced.
+const HIDE_ON_BLUR_KEY: &str = "local.desktop.hide_on_blur";
+
+#[tauri::command]
+fn get_settings(state: State<AppState>) -> CmdResult<SettingsDto> {
+    with_store(&state, |s| {
+        let v = Settings::load(s)?;
+        Ok(SettingsDto {
+            remind_start: v.remind_start,
+            remind_before_start: v.remind_before_start,
+            remind_before_end: v.remind_before_end,
+            remind_unfinished: v.remind_unfinished,
+            ending_soon: v.ending_soon,
+            quiet_hours: fmt_quiet_hours(v.quiet_hours),
+            sound: v.sound,
+            hide_on_blur: s.setting(HIDE_ON_BLUR_KEY)?.as_deref() != Some("false"),
+        })
+    })
+}
+
+#[tauri::command]
+fn save_settings(state: State<AppState>, settings: SettingsDto) -> CmdResult<()> {
+    let quiet_hours = parse_quiet_hours(&settings.quiet_hours).map_err(|e| format!("{e:#}"))?;
+    write(&state, |s| {
+        Settings {
+            remind_start: settings.remind_start,
+            remind_before_start: settings.remind_before_start.min(240),
+            remind_before_end: settings.remind_before_end.min(240),
+            remind_unfinished: settings.remind_unfinished,
+            ending_soon: settings.ending_soon.min(240),
+            quiet_hours,
+            sound: settings.sound,
+        }
+        .save(s)?;
+        s.set_setting(HIDE_ON_BLUR_KEY, &settings.hide_on_blur.to_string())
+    })
+}
+
+// ---- Sync ----------------------------------------------------------------
+
+#[derive(Serialize)]
+struct SyncInfo {
+    #[serde(flatten)]
+    status: planner_sync::SyncStatus,
+    /// Project to offer on the login form (saved one, else the build's default).
+    default_url: String,
+    default_key: String,
+}
+
+fn open_store() -> CmdResult<Store> {
+    Store::open(&paths::db_path()).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn sync_status() -> CmdResult<SyncInfo> {
+    let store = open_store()?;
+    let status = planner_sync::login::status(&store).map_err(|e| format!("{e:#}"))?;
+    let saved = SyncConfig::load().ok().flatten();
+    Ok(SyncInfo {
+        status,
+        default_url: saved.as_ref().map_or(DEFAULT_SUPABASE_URL.into(), |c| c.url.clone()),
+        default_key: saved.map_or(DEFAULT_SUPABASE_KEY.into(), |c| c.anon_key),
+    })
+}
+
+/// Runs off the UI thread (network). Returns a message for the user.
+#[tauri::command]
+async fn sync_login(url: String, key: String, email: String, password: String, signup: bool) -> CmdResult<String> {
+    let store = open_store()?;
+    let cfg = SyncConfig::new(&url, &key);
+    let out = planner_sync::login(&store, cfg, &email, &password, signup).map_err(|e| format!("{e:#}"))?;
+    Ok(match out {
+        LoginOutcome::ConfirmEmail => "Account created. Click the link in the confirmation email, then log in.".into(),
+        LoginOutcome::LoggedIn { sent, received } => {
+            #[cfg(target_os = "android")]
+            android::ensure_sync();
+            changed();
+            format!("Logged in. Sent {sent} rows, received {received} changes.")
+        }
+    })
+}
+
+#[tauri::command]
+async fn sync_logout() -> CmdResult<()> {
+    planner_sync::logout().map_err(|e| format!("{e:#}"))?;
+    changed();
+    Ok(())
+}
+
+/// Defaults for the login form, from the repo's `.env` at build time.
+const DEFAULT_SUPABASE_URL: &str = env!("TIMLO_DEFAULT_SUPABASE_URL");
+const DEFAULT_SUPABASE_KEY: &str = env!("TIMLO_DEFAULT_SUPABASE_KEY");
+
+/// On the desktop the window acts as a popup from Waybar: launching `timlo`
+/// again toggles it, and it hides when it loses focus (unless turned off in
+/// Settings). Hidden, not closed, so it comes back instantly.
+#[cfg(desktop)]
+mod popup {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    use tauri::{AppHandle, Manager, Window, WindowEvent};
+
+    use crate::AppState;
+
+    /// Clicking the Waybar module can itself take focus away; a launch right
+    /// after an auto-hide means "close", not "open again".
+    static LAST_AUTO_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
+    /// Ignore focus flicker (popups, dialogs opening) shorter than this.
+    const GRACE: Duration = Duration::from_millis(150);
+
+    pub fn toggle(app: &AppHandle) {
+        let Some(w) = app.get_webview_window("main") else { return };
+        let just_hidden = LAST_AUTO_HIDE.lock().ok().and_then(|t| *t).is_some_and(|t| t.elapsed() < Duration::from_millis(600));
+        let visible = w.is_visible().unwrap_or(false);
+        if just_hidden || (visible && w.is_focused().unwrap_or(false)) {
+            let _ = w.hide();
+        } else {
+            let _ = w.unminimize();
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }
+
+    pub fn on_event(window: &Window, event: &WindowEvent) {
+        if !matches!(event, WindowEvent::Focused(false)) || !hide_on_blur(window.app_handle()) {
+            return;
+        }
+        let w = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(GRACE);
+            if w.is_visible().unwrap_or(false) && !w.is_focused().unwrap_or(true) {
+                let _ = w.hide();
+                if let Ok(mut t) = LAST_AUTO_HIDE.lock() {
+                    *t = Some(Instant::now());
+                }
+            }
+        });
+    }
+
+    fn hide_on_blur(app: &AppHandle) -> bool {
+        let state = app.state::<AppState>();
+        let Ok(store) = state.0.lock() else { return true };
+        store.setting(super::HIDE_ON_BLUR_KEY).ok().flatten().as_deref() != Some("false")
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[allow(unused_mut)]
@@ -287,19 +492,17 @@ pub fn run() {
     // window that is already open.
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
-        }));
+        builder = builder
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| popup::toggle(app)))
+            .on_window_event(popup::on_event);
     }
 
     builder
         .setup(|app| {
             let store = Store::open(&paths::db_path())?;
             app.manage(AppState(Mutex::new(store)));
+            #[cfg(target_os = "android")]
+            android::ensure_sync();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -318,6 +521,11 @@ pub fn run() {
             save_template_blocks,
             get_week,
             set_week,
+            get_settings,
+            save_settings,
+            sync_status,
+            sync_login,
+            sync_logout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running timlo");

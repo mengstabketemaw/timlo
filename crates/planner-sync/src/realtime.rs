@@ -14,6 +14,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 use crate::client::Client;
+use crate::config::session_path;
 
 const HEARTBEAT: Duration = Duration::from_secs(25);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -25,6 +26,9 @@ pub fn run(client: Arc<Mutex<Client>>, on_change: impl Fn()) {
     let mut backoff = Duration::from_secs(5);
     let mut last_err = String::new();
     loop {
+        if !session_path().exists() {
+            return;
+        }
         let started = Instant::now();
         match listen(&client, &on_change) {
             Ok(()) => last_err.clear(),
@@ -95,7 +99,7 @@ fn listen(client: &Arc<Mutex<Client>>, on_change: &impl Fn()) -> Result<()> {
     let mut last_beat = Instant::now();
     let mut next_ref: u64 = 2;
     loop {
-        if chrono::Utc::now().timestamp() + TOKEN_MARGIN_SECS >= expires_at {
+        if chrono::Utc::now().timestamp() + TOKEN_MARGIN_SECS >= expires_at || !session_path().exists() {
             let _ = ws.close(None);
             return Ok(());
         }

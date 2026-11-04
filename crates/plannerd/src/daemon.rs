@@ -91,8 +91,10 @@ pub fn run() -> Result<()> {
             Err(e) => eprintln!("plannerd: {e:#}"),
         }
         // Push anything written since the last pass, by us or another process.
-        if let Some(s) = &sync {
-            let _ = s.send(SyncEvent::Local);
+        // A closed channel means sync stopped (logged out); start again on
+        // the next login.
+        if sync.as_ref().is_some_and(|s| s.send(SyncEvent::Local).is_err()) {
+            sync = None;
         }
 
         let into_minute = now.second() as u64 * 1000 + (now.nanosecond() / 1_000_000).min(999) as u64;

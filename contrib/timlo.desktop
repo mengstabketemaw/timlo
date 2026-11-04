@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=timlo
+GenericName=Day planner
+Comment=See and plan what you should be doing right now
+Exec=timlo
+Icon=timlo
+Terminal=false
+Categories=Office;Calendar;Utility;
+Keywords=planner;schedule;day;template;
+StartupWMClass=timlo

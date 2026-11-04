@@ -3,19 +3,30 @@
 A personal day planner that always shows what you should be doing right now.
 Spec: [Day Planner — Spec](https://claude.ai/artifact/A7GszREJWzERksYrkiRSSr).
 
-This repo has milestones 1–4:
+This repo has milestones 1–5:
 
 | Part | What it is |
 | --- | --- |
 | `crates/planner-core` | Shared logic: data model, template → day rules, now/next, reminders, settings, SQLite storage, plan-file import. |
 | `crates/plannerd` | Linux background service + CLI: Waybar module, desktop notifications, Done/Skip clicks. |
 | `crates/planner-sync` | Supabase sync: login, push/pull, Realtime. Run by `plannerd`. |
-| `app/` | Planner app (Tauri 2 + Svelte): Today, Templates, Week and Calendar screens. Same database as `plannerd`. |
+| `app/` | Planner app (Tauri 2 + Svelte): Today, Templates, Week, Calendar and Settings screens. Same database as `plannerd`. |
+| `app/src-tauri/gen/android` | Android build of the app, plus the Kotlin service: pinned "now" notification, exact alarms, Done/Skip buttons, restart on boot. |
 | `supabase/schema.sql` | Tables, row-level security and Realtime setup for the Supabase project. |
 
-Android and summaries come in later milestones.
+Summaries and polish come in later milestones.
 
 ## Install (Arch / Hyprland)
+
+As a package (builds from this checkout, installs to /usr):
+
+```sh
+cd packaging/arch && makepkg -si
+plannerd init
+systemctl --user enable --now plannerd
+```
+
+Or by hand into your home directory:
 
 ```sh
 cargo install --path crates/plannerd          # → ~/.cargo/bin/plannerd
@@ -37,11 +48,61 @@ and, optionally, the classes in `contrib/waybar/style.css`.
 ```sh
 cd app && npm install && npx tauri build --no-bundle
 install -Dm755 ../target/release/timlo ~/.local/bin/timlo
+install -Dm644 ../contrib/timlo.desktop ~/.local/share/applications/timlo.desktop   # launcher entry
+install -Dm644 app-icon.svg ~/.local/share/icons/hicolor/scalable/apps/timlo.svg
 ```
 
-Left-clicking the Waybar module runs `timlo`; a second launch focuses the
-open window. To get a floating popup under Waybar instead of a tiled window,
+Each template block can have an icon (an emoji) and a colour; the Today view
+shows them on the blocks copied from it.
+
+Left-clicking the Waybar module runs `timlo`; clicking again hides it, and it
+also hides when you click elsewhere (turn that off in Settings → Window). It
+hides rather than quits, so it reopens instantly. To get a floating popup at the top centre under Waybar instead of a tiled window,
 add the rules in `contrib/hyprland.conf`. For development: `cd app && npx tauri dev`.
+
+The Settings screen sets reminder timing, sound and quiet hours, and is
+where you log in to sync without a terminal (the phone uses it too).
+
+### Waybar
+
+Add `"custom/planner"` to a module list and paste the block from
+`contrib/waybar/config.jsonc` into your config (and the colours from
+`contrib/waybar/style.css` into your stylesheet).
+
+## Android
+
+```sh
+source scripts/android-env.sh                 # JDK 21, SDK and NDK under $HOME
+cd app && npm run android:build               # → gen/android/app/build/outputs/apk/universal/release/
+npx tauri android build --debug --apk --target aarch64     # quicker debug build for a phone
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
+
+On first start the app asks for notification permission and starts its
+service. What runs on the phone:
+
+- **Now notification** (channel "Now"): current block, a progress bar, time
+  left and the next block, or "Free until 14:00 → Gym" in a gap. Done/Skip
+  buttons answer the current block (or, in a gap, the last unanswered one).
+  It can't be swiped away; on Android 14+ a swipe makes it come straight back.
+- **Reminders** (channel "Reminders"): the same ones as on Linux, worked out
+  by the same Rust code. "Did you finish …?" has Done/Skip and disappears
+  once the block is answered on any device. Quiet hours stop them.
+- **Exact alarms** at every block boundary and reminder, so all of this
+  happens on time with the app closed and the phone in Doze. The
+  `USE_EXACT_ALARM` permission is granted at install.
+- **Restart** after a reboot or app update; re-planning after a time-zone
+  or clock change.
+- **Sync** runs inside the service once you log in on the Settings screen.
+  The login form is pre-filled with the project from the repo's `.env`
+  (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`) at build time.
+
+Some phones (Xiaomi, Samsung, …) kill background apps aggressively; if the
+notification disappears, set timlo's battery usage to "Unrestricted".
+
+The Kotlin side (`gen/android/app/src/main/java/dev/timlo/planner/`) is a
+thin shell over `app/src-tauri/src/android.rs` (JNI) and `phone.rs`, which
+decide what the notification says, which reminders are due and when to wake.
 
 ### Sync (Supabase)
 

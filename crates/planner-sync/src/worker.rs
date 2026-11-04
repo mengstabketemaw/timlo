@@ -5,6 +5,7 @@
 //! - Realtime event → pull.
 //! - Catch-up pull on start and every 15 minutes as a fallback.
 //! - Offline: failures are retried every minute; local use is unaffected.
+//! - Logged out (session file gone): both threads stop.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -16,6 +17,7 @@ use anyhow::Result;
 use planner_core::Store;
 
 use crate::client::Client;
+use crate::config::session_path;
 use crate::realtime;
 
 const FALLBACK_PULL: Duration = Duration::from_secs(15 * 60);
@@ -58,6 +60,10 @@ pub fn start(db_path: PathBuf, on_pulled: impl Fn() + Send + 'static) -> Result<
         let mut last_pull: Option<Instant> = None;
         let mut last_err = String::new();
         loop {
+            if !session_path().exists() {
+                eprintln!("plannerd: logged out, sync stopped");
+                return;
+            }
             let mut failed = false;
             let mut report = |what: &str, r: Result<usize>| -> Option<usize> {
                 match r {

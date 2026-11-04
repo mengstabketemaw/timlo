@@ -25,6 +25,8 @@ export interface Day {
   is_past: boolean
   now_min: number | null
   blocks: DayBlock[]
+  /** Icon and colour per day block id, from its template block. */
+  looks: Record<string, { icon: string | null; colour: string | null }>
 }
 
 export interface TemplateBlock {
@@ -68,6 +70,29 @@ export interface MonthDay {
   missed: number
 }
 
+export interface Settings {
+  remind_start: boolean
+  remind_before_start: number
+  remind_before_end: number
+  remind_unfinished: boolean
+  ending_soon: number
+  /** "23:00-07:00", or "" for none. */
+  quiet_hours: string
+  sound: boolean
+  /** Desktop: hide the window when it loses focus (this device only). */
+  hide_on_blur: boolean
+}
+
+export interface SyncInfo {
+  url: string | null
+  account: string | null
+  pending: number
+  last_received: string | null
+  files: string
+  default_url: string
+  default_key: string
+}
+
 export const api = {
   day: (date?: string | null) => invoke<Day>('get_day', { date: date ?? null }),
   setStatus: (id: string, status: Status) => invoke<DayBlock>('set_status', { id, status }),
@@ -85,6 +110,12 @@ export const api = {
   saveTemplateBlocks: (id: string, blocks: BlockIn[]) => invoke<TemplateBlock[]>('save_template_blocks', { id, blocks }),
   week: () => invoke<(string | null)[]>('get_week'),
   setWeek: (weekday: number, templateId: string | null) => invoke<void>('set_week', { weekday, templateId }),
+  settings: () => invoke<Settings>('get_settings'),
+  saveSettings: (settings: Settings) => invoke<void>('save_settings', { settings }),
+  syncStatus: () => invoke<SyncInfo>('sync_status'),
+  syncLogin: (url: string, key: string, email: string, password: string, signup: boolean) =>
+    invoke<string>('sync_login', { url, key, email, password, signup }),
+  syncLogout: () => invoke<void>('sync_logout'),
 }
 
 /** 420 → "07:00" */

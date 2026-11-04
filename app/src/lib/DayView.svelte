@@ -60,6 +60,12 @@
     }
   }
 
+  /** "📚 " for a block whose template block has an icon. */
+  function iconOf(b: DayBlock): string {
+    const icon = day?.looks[b.id]?.icon
+    return icon ? `${icon} ` : ''
+  }
+
   const current = $derived(
     day?.now_min != null
       ? day.blocks.find((b) => b.start_min <= day!.now_min! && day!.now_min! < b.end_min)
@@ -172,7 +178,7 @@
     <section class="now card" class:free={!current}>
       {#if current}
         <div class="label">Now · {hm(current.start_min)}–{hm(current.end_min)}</div>
-        <div class="now-title">{current.title}</div>
+        <div class="now-title">{iconOf(current)}{current.title}</div>
         <div class="bar"><span style:width="{progress(current)}%"></span></div>
         <div class="row">
           <span class="muted">{fmtDur(current.end_min - day.now_min!)} left{next ? ` · next: ${next.title} at ${hm(next.start_min)}` : ''}</span>
@@ -198,13 +204,13 @@
 
   <ol class="timeline">
     {#each day.blocks as b (b.id)}
-      <li class="block {b.status}" class:current={b === current}>
+      <li class="block {b.status}" class:current={b === current} style:--block-colour={day.looks[b.id]?.colour}>
         {#if editing === b.id}
           {@render editor()}
         {:else}
           <div class="time">{hm(b.start_min)}<br /><span class="muted">{hm(b.end_min)}</span></div>
           <div class="main">
-            <div class="title">{b.title}</div>
+            <div class="title">{iconOf(b)}{b.title}</div>
             {#if b.note}<div class="note muted">{b.note}</div>{/if}
           </div>
           <span class="badge {b.status}">{STATUS_LABEL[b.status]}</span>
@@ -311,6 +317,7 @@
     gap: 0.4rem;
   }
   .block {
+    border-left: 4px solid var(--block-colour, var(--border)) !important;
     display: flex;
     align-items: center;
     gap: 0.75rem;

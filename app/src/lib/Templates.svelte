@@ -8,6 +8,7 @@
     end: string
     title: string
     note: string
+    icon: string
     colour: string
   }
 
@@ -45,6 +46,7 @@
       end: timeInput(b.end_min),
       title: b.title,
       note: b.note ?? '',
+      icon: b.icon ?? '',
       colour: b.colour ?? '',
     }))
     dirty = false
@@ -114,6 +116,7 @@
       end: timeInput(Math.min(start + 60, 24 * 60)),
       title: '',
       note: '',
+      icon: '',
       colour: '',
     })
     dirty = true
@@ -133,6 +136,7 @@
         end_min: parseHm(r.end, true),
         title: r.title,
         note: r.note || null,
+        icon: r.icon.trim() || null,
         colour: r.colour || null,
       }))
       .sort((a, b) => a.start_min - b.start_min)
@@ -193,7 +197,7 @@
 
       <table>
         <thead>
-          <tr><th>Start</th><th>End</th><th>Title</th><th>Note</th><th>Colour</th><th></th></tr>
+          <tr><th>Start</th><th>End</th><th>Title</th><th>Note</th><th>Icon</th><th>Colour</th><th></th></tr>
         </thead>
         <tbody>
           {#each rows as r (r.key)}
@@ -202,6 +206,17 @@
               <td><input type="time" bind:value={r.end} oninput={() => (dirty = true)} aria-label="End" /></td>
               <td><input bind:value={r.title} oninput={() => (dirty = true)} placeholder="Title" aria-label="Title" /></td>
               <td><input bind:value={r.note} oninput={() => (dirty = true)} placeholder="Optional" aria-label="Note" /></td>
+              <td>
+                <input
+                  class="icon"
+                  bind:value={r.icon}
+                  oninput={() => (dirty = true)}
+                  placeholder="📚"
+                  maxlength="4"
+                  title="An emoji shown before the title"
+                  aria-label="Icon"
+                />
+              </td>
               <td>
                 <input
                   type="color"
@@ -237,6 +252,10 @@
 </div>
 
 <style>
+  .icon {
+    width: 3.2rem;
+    text-align: center;
+  }
   .layout {
     display: grid;
     grid-template-columns: minmax(180px, 240px) 1fr;

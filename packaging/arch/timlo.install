@@ -1,0 +1,8 @@
+post_install() {
+  cat <<'MSG'
+==> Per user, to start the background service and get Waybar going:
+      plannerd init
+      systemctl --user enable --now plannerd
+    Then add "custom/planner" to Waybar (see /usr/share/doc/timlo/waybar/).
+MSG
+}
