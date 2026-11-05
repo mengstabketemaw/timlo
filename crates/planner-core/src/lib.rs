@@ -18,8 +18,10 @@ pub mod reminders;
 pub mod settings;
 pub mod store;
 pub mod sync;
+pub mod tasks;
 pub mod time;
 
 pub use model::{BlockInput, Day, DayBlock, Status, Template, TemplateBlock};
 pub use settings::Settings;
 pub use store::Store;
+pub use tasks::Task;

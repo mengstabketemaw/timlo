@@ -13,7 +13,7 @@ use chrono::{Local, NaiveDate, NaiveDateTime};
 use planner_core::store::weekday_num;
 use planner_core::time::minute_of;
 use planner_core::settings::{fmt_quiet_hours, parse_quiet_hours};
-use planner_core::{paths, BlockInput, DayBlock, Settings, Status, Store, Template, TemplateBlock};
+use planner_core::{paths, BlockInput, DayBlock, Settings, Status, Store, Task, Template, TemplateBlock};
 use planner_sync::{LoginOutcome, SyncConfig};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
@@ -320,6 +320,40 @@ fn set_week(state: State<AppState>, weekday: u8, template_id: Option<String>) ->
     write(&state, |s| s.set_week_assignment(weekday, template_id.as_deref(), now()))
 }
 
+// ---- Tasks ---------------------------------------------------------------
+
+#[derive(Serialize)]
+struct TaskList {
+    tasks: Vec<Task>,
+    /// Done tasks (hidden unless shown).
+    done_count: usize,
+}
+
+#[tauri::command]
+fn list_tasks(state: State<AppState>, show_done: bool) -> CmdResult<TaskList> {
+    with_store(&state, |s| Ok(TaskList { tasks: s.tasks(show_done)?, done_count: s.done_task_count()? }))
+}
+
+#[tauri::command]
+fn add_task(state: State<AppState>, title: String, parent_id: Option<String>) -> CmdResult<Task> {
+    write(&state, |s| s.add_task(&title, parent_id.as_deref()))
+}
+
+#[tauri::command]
+fn update_task(state: State<AppState>, id: String, title: String, notes: Option<String>) -> CmdResult<()> {
+    write(&state, |s| s.update_task(&id, &title, notes.as_deref()))
+}
+
+#[tauri::command]
+fn set_task_done(state: State<AppState>, id: String, done: bool) -> CmdResult<()> {
+    write(&state, |s| s.set_task_done(&id, done))
+}
+
+#[tauri::command]
+fn delete_task(state: State<AppState>, id: String) -> CmdResult<()> {
+    write(&state, |s| s.delete_task(&id))
+}
+
 // ---- Settings ------------------------------------------------------------
 
 #[derive(Serialize, Deserialize)]
@@ -521,6 +555,11 @@ pub fn run() {
             save_template_blocks,
             get_week,
             set_week,
+            list_tasks,
+            add_task,
+            update_task,
+            set_task_done,
+            delete_task,
             get_settings,
             save_settings,
             sync_status,

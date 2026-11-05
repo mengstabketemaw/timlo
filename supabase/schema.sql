@@ -94,11 +94,26 @@ create table if not exists public.settings (
   primary key (user_id, key)
 );
 
+create table if not exists public.tasks (
+  user_id    uuid    not null default auth.uid() references auth.users on delete cascade,
+  id         text    not null,
+  parent_id  text,
+  title      text    not null,
+  notes      text,
+  done       integer not null default 0,
+  done_at    bigint,
+  created_at bigint  not null,
+  updated_at bigint  not null,
+  deleted    integer not null default 0,
+  synced_at  timestamptz not null default clock_timestamp(),
+  primary key (user_id, id)
+);
+
 do $$
 declare
   t text;
 begin
-  foreach t in array array['templates', 'template_blocks', 'week_assignment', 'days', 'day_blocks', 'settings']
+  foreach t in array array['templates', 'template_blocks', 'week_assignment', 'days', 'day_blocks', 'settings', 'tasks']
   loop
     execute format('create index if not exists %I on public.%I (user_id, synced_at)', t || '_synced', t);
     execute format('alter table public.%I enable row level security', t);

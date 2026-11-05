@@ -10,7 +10,7 @@ This repo has milestones 1–5:
 | `crates/planner-core` | Shared logic: data model, template → day rules, now/next, reminders, settings, SQLite storage, plan-file import. |
 | `crates/plannerd` | Linux background service + CLI: Waybar module, desktop notifications, Done/Skip clicks. |
 | `crates/planner-sync` | Supabase sync: login, push/pull, Realtime. Run by `plannerd`. |
-| `app/` | Planner app (Tauri 2 + Svelte): Today, Templates, Week, Calendar and Settings screens. Same database as `plannerd`. |
+| `app/` | Planner app (Tauri 2 + Svelte): Today, Tasks, Templates, Week, Calendar and Settings screens. Same database as `plannerd`. |
 | `app/src-tauri/gen/android` | Android build of the app, plus the Kotlin service: pinned "now" notification, exact alarms, Done/Skip buttons, restart on boot. |
 | `supabase/schema.sql` | Tables, row-level security and Realtime setup for the Supabase project. |
 
@@ -59,6 +59,10 @@ Left-clicking the Waybar module runs `timlo`; clicking again hides it, and it
 also hides when you click elsewhere (turn that off in Settings → Window). It
 hides rather than quits, so it reopens instantly. To get a floating popup at the top centre under Waybar instead of a tiled window,
 add the rules in `contrib/hyprland.conf`. For development: `cd app && npx tauri dev`.
+
+The Tasks tab is a synced scratch book: a task has a title, free-form
+details and a checklist of steps. Ticking a task hides it; "Show done"
+brings finished ones back (remembered per device).
 
 The Settings screen sets reminder timing, sound and quiet hours, and is
 where you log in to sync without a terminal (the phone uses it too).

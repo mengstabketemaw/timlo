@@ -53,6 +53,11 @@ pub const TABLES: &[TableSpec] = &[
         ],
     },
     TableSpec { name: "settings", pk: "key", cols: &["key", "value", "updated_at", "deleted"] },
+    TableSpec {
+        name: "tasks",
+        pk: "id",
+        cols: &["id", "parent_id", "title", "notes", "done", "done_at", "created_at", "updated_at", "deleted"],
+    },
 ];
 
 pub fn table(name: &str) -> Option<&'static TableSpec> {

@@ -4,10 +4,12 @@
   import Week from './lib/Week.svelte'
   import Calendar from './lib/Calendar.svelte'
   import SettingsView from './lib/Settings.svelte'
+  import Tasks from './lib/Tasks.svelte'
 
-  type Tab = 'today' | 'templates' | 'week' | 'calendar' | 'settings'
+  type Tab = 'today' | 'tasks' | 'templates' | 'week' | 'calendar' | 'settings'
   const tabs: [Tab, string][] = [
     ['today', 'Today'],
+    ['tasks', 'Tasks'],
     ['templates', 'Templates'],
     ['week', 'Week'],
     ['calendar', 'Calendar'],
@@ -32,13 +34,17 @@
 <nav>
   <span class="brand">timlo</span>
   {#each tabs as [id, label]}
-    <button class="tab" class:active={tab === id} onclick={() => (tab = id)}>{label}</button>
+    <button class="tab" class:active={tab === id} class:gear={id === 'settings'} onclick={() => (tab = id)} aria-label={label}>
+      {#if id === 'settings'}<span class="wide">{label}</span><span class="narrow" aria-hidden="true">⚙</span>{:else}{label}{/if}
+    </button>
   {/each}
 </nav>
 
 <main>
   {#if tab === 'today'}
     <DayView refreshKey={tick} />
+  {:else if tab === 'tasks'}
+    <Tasks refreshKey={tick} />
   {:else if tab === 'templates'}
     <Templates />
   {:else if tab === 'week'}
@@ -75,6 +81,40 @@
   .tab.active {
     background: var(--surface-2);
     font-weight: 600;
+  }
+  .narrow {
+    display: none;
+  }
+  /* Phones and the narrow Waybar popup: every tab fits without scrolling; Settings becomes ⚙. */
+  @media (max-width: 560px) {
+    nav {
+      gap: 0;
+      padding: 0.4rem 0.25rem;
+      overflow-x: visible;
+    }
+    .brand {
+      display: none;
+    }
+    .tab {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0.45rem 0.1rem;
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+    main {
+      padding: 0.75rem;
+    }
+    .tab.gear {
+      flex: 0 0 2rem;
+      font-size: 1.05rem;
+    }
+    .wide {
+      display: none;
+    }
+    .narrow {
+      display: inline;
+    }
   }
   main {
     max-width: 1100px;

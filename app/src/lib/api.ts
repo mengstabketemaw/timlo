@@ -93,6 +93,17 @@ export interface SyncInfo {
   default_key: string
 }
 
+export interface Task {
+  id: string
+  parent_id: string | null
+  title: string
+  notes: string | null
+  done: boolean
+  done_at: number | null
+  created_at: number
+  subtasks: Task[]
+}
+
 export const api = {
   day: (date?: string | null) => invoke<Day>('get_day', { date: date ?? null }),
   setStatus: (id: string, status: Status) => invoke<DayBlock>('set_status', { id, status }),
@@ -110,6 +121,11 @@ export const api = {
   saveTemplateBlocks: (id: string, blocks: BlockIn[]) => invoke<TemplateBlock[]>('save_template_blocks', { id, blocks }),
   week: () => invoke<(string | null)[]>('get_week'),
   setWeek: (weekday: number, templateId: string | null) => invoke<void>('set_week', { weekday, templateId }),
+  tasks: (showDone: boolean) => invoke<{ tasks: Task[]; done_count: number }>('list_tasks', { showDone }),
+  addTask: (title: string, parentId: string | null = null) => invoke<Task>('add_task', { title, parentId }),
+  updateTask: (id: string, title: string, notes: string | null) => invoke<void>('update_task', { id, title, notes }),
+  setTaskDone: (id: string, done: boolean) => invoke<void>('set_task_done', { id, done }),
+  deleteTask: (id: string) => invoke<void>('delete_task', { id }),
   settings: () => invoke<Settings>('get_settings'),
   saveSettings: (settings: Settings) => invoke<void>('save_settings', { settings }),
   syncStatus: () => invoke<SyncInfo>('sync_status'),

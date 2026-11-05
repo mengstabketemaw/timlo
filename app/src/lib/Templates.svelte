@@ -202,11 +202,11 @@
         <tbody>
           {#each rows as r (r.key)}
             <tr>
-              <td><input type="time" bind:value={r.start} oninput={() => (dirty = true)} aria-label="Start" /></td>
-              <td><input type="time" bind:value={r.end} oninput={() => (dirty = true)} aria-label="End" /></td>
-              <td><input bind:value={r.title} oninput={() => (dirty = true)} placeholder="Title" aria-label="Title" /></td>
-              <td><input bind:value={r.note} oninput={() => (dirty = true)} placeholder="Optional" aria-label="Note" /></td>
-              <td>
+              <td class="c-start"><input type="time" bind:value={r.start} oninput={() => (dirty = true)} aria-label="Start" /></td>
+              <td class="c-end"><input type="time" bind:value={r.end} oninput={() => (dirty = true)} aria-label="End" /></td>
+              <td class="c-title"><input bind:value={r.title} oninput={() => (dirty = true)} placeholder="Title" aria-label="Title" /></td>
+              <td class="c-note"><input bind:value={r.note} oninput={() => (dirty = true)} placeholder="Note (optional)" aria-label="Note" /></td>
+              <td class="c-icon">
                 <input
                   class="icon"
                   bind:value={r.icon}
@@ -217,7 +217,7 @@
                   aria-label="Icon"
                 />
               </td>
-              <td>
+              <td class="c-colour">
                 <input
                   type="color"
                   value={r.colour || '#2f5d8a'}
@@ -228,7 +228,7 @@
                   aria-label="Colour"
                 />
               </td>
-              <td><button class="ghost danger" onclick={() => removeRow(r.key)} aria-label="Remove block">✕</button></td>
+              <td class="c-del"><button class="ghost danger" onclick={() => removeRow(r.key)} aria-label="Remove block">✕</button></td>
             </tr>
           {/each}
         </tbody>
@@ -320,6 +320,60 @@
     padding: 0;
     width: 2.2rem;
     height: 1.9rem;
+  }
+  /* Phones: each block becomes a card — times, icon and colour on one line,
+     then title and note at full width. */
+  @media (max-width: 560px) {
+    thead {
+      display: none;
+    }
+    table,
+    tbody {
+      display: block;
+    }
+    tr {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto auto auto;
+      grid-template-areas:
+        'start end icon colour del'
+        'title title title title title'
+        'note note note note note';
+      gap: 0.4rem;
+      padding: 0.6rem;
+      margin-bottom: 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+    }
+    td {
+      padding: 0;
+    }
+    td input[type='time'] {
+      width: 100%;
+    }
+    .c-start {
+      grid-area: start;
+    }
+    .c-end {
+      grid-area: end;
+    }
+    .c-icon {
+      grid-area: icon;
+    }
+    .c-colour {
+      grid-area: colour;
+      align-self: center;
+    }
+    .c-del {
+      grid-area: del;
+      align-self: center;
+    }
+    .c-title {
+      grid-area: title;
+    }
+    .c-note {
+      grid-area: note;
+    }
   }
   .notice,
   .hint {

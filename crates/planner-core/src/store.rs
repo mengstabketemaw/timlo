@@ -79,6 +79,18 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  INTEGER NOT NULL,
     deleted     INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS tasks (
+    id          TEXT PRIMARY KEY,
+    parent_id   TEXT,                  -- set for a subtask (one level)
+    title       TEXT NOT NULL,
+    notes       TEXT,
+    done        INTEGER NOT NULL DEFAULT 0,
+    done_at     INTEGER,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    deleted     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS tasks_parent ON tasks (parent_id);
 "#;
 
 /// Copy a template block into a day. Re-copying keeps the Done/Skip status,
@@ -114,7 +126,7 @@ pub(crate) fn stamp() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-fn new_id() -> String {
+pub(crate) fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 

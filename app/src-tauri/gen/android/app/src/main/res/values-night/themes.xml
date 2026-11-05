@@ -1,6 +1,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.timlo_app" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <!-- Behind the status and navigation bars: the app's top bar colour (surface). -->
+        <item name="android:windowBackground">#24272C</item>
     </style>
 </resources>
