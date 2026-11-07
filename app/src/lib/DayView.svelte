@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { ui } from './ui.svelte'
+  import { startFor } from './focus.svelte'
   import {
     api,
     errText,
     fmtDur,
     hm,
+    isoDate,
     longDate,
     parseHm,
     STATUS_LABEL,
@@ -82,6 +85,29 @@
   function progress(b: DayBlock): number {
     if (!day?.now_min) return 0
     return Math.round(((day.now_min - b.start_min) * 100) / (b.end_min - b.start_min))
+  }
+
+  const todayIso = isoDate(new Date())
+  const tomorrowIso = isoDate(new Date(Date.now() + 86_400_000))
+  let moved = $state('')
+
+  /** Missed or skipped blocks from today or earlier can be given another go. */
+  function canMove(b: DayBlock): boolean {
+    return (b.status === 'missed' || b.status === 'skipped') && b.date <= todayIso
+  }
+
+  async function moveTo(b: DayBlock, to: string) {
+    await run(async () => {
+      const nb = await api.moveBlock(b.id, to)
+      moved = `${b.title} moved to ${to === todayIso ? 'today' : 'tomorrow'} at ${hm(nb.start_min)}`
+      setTimeout(() => (moved = ''), 4000)
+    })
+  }
+
+  function focusOn() {
+    if (!current || day?.now_min == null) return
+    ui.tab = 'focus'
+    void startFor(current.title, current.end_min - day.now_min)
   }
 
   function mark(b: DayBlock, status: Status) {
@@ -183,6 +209,7 @@
         <div class="row">
           <span class="muted">{fmtDur(current.end_min - day.now_min!)} left{next ? ` · next: ${next.title} at ${hm(next.start_min)}` : ''}</span>
           <span class="spacer"></span>
+          <button class="focus-btn" onclick={focusOn} title="Focus until this block ends">Focus</button>
           <button class:primary={current.status === 'done'} onclick={() => mark(current!, 'done')}>Done</button>
           <button class:primary={current.status === 'skipped'} onclick={() => mark(current!, 'skipped')}>Skip</button>
         </div>
@@ -201,6 +228,8 @@
       {day.is_past ? 'Nothing was planned for this day.' : 'Nothing planned. Pick a template or add a block.'}
     </p>
   {/if}
+
+  {#if moved}<p class="moved">{moved}</p>{/if}
 
   <ol class="timeline">
     {#each day.blocks as b (b.id)}
@@ -222,6 +251,12 @@
               <button class="ghost danger" title="Delete" onclick={() => run(() => api.deleteDayBlock(b.id))}>Delete</button>
             {/if}
           </div>
+          {#if canMove(b)}
+            <div class="move">
+              <button class="ghost small" onclick={() => moveTo(b, todayIso)} title="Next free slot today">→ Later today</button>
+              <button class="ghost small" onclick={() => moveTo(b, tomorrowIso)} title="Same time tomorrow, or the first free slot">→ Tomorrow</button>
+            </div>
+          {/if}
         {/if}
       </li>
     {/each}
@@ -254,6 +289,27 @@
 {/snippet}
 
 <style>
+  .move {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    flex-basis: 100%;
+    padding-left: 3.5rem;
+  }
+  .move button {
+    font-size: 0.8rem;
+    padding: 0.15rem 0.5rem;
+    color: var(--accent);
+  }
+  .moved {
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    color: var(--done);
+  }
+  .focus-btn {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
   .head {
     display: flex;
     justify-content: space-between;

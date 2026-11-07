@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime};
 use std::{fs, thread};
 
 use anyhow::{bail, Context, Result};
-use chrono::{Local, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Timelike};
 use planner_core::time::minute_of;
 use planner_core::{reminders, Settings, Status, Store};
 use planner_sync::config::session_path;
@@ -141,9 +141,21 @@ fn tick(
             for r in reminders::due(&blocks, from, m, &settings) {
                 notify::reminder(&r, settings.sound, tx.clone());
             }
+            if let Some((title, body)) = recap_due(store, today, from, m)? {
+                notify::plain(&title, &body);
+            }
         }
     }
     Ok(serde_json::to_string(&out)?)
+}
+
+/// The weekly recap, if Sunday's recap minute is in `from..=m`.
+fn recap_due(store: &Store, today: NaiveDate, from: u16, m: u16) -> Result<Option<(String, String)>> {
+    use planner_core::summary;
+    if today.weekday() != chrono::Weekday::Sun || !(from..=m).contains(&summary::RECAP_MIN) {
+        return Ok(None);
+    }
+    Ok(summary::recap_text(&summary::week(store, today)?))
 }
 
 /// Import the plan file when it changed since the last import (tracked in

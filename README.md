@@ -30,6 +30,7 @@ Or by hand into your home directory:
 
 ```sh
 cargo install --path crates/plannerd          # → ~/.cargo/bin/plannerd
+ln -sf ~/.cargo/bin/plannerd ~/.local/bin/  # Waybar started by Hyprland may not have ~/.cargo/bin on PATH
 plannerd init                                 # writes ~/.config/timlo/plan.toml and imports it
 install -Dm644 contrib/systemd/plannerd.service ~/.config/systemd/user/plannerd.service
 systemctl --user daemon-reload
@@ -85,19 +86,22 @@ adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-u
 On first start the app asks for notification permission and starts its
 service. What runs on the phone:
 
-- **Now notification** (channel "Now"): current block, a progress bar, time
-  left and the next block, or "Free until 14:00 → Gym" in a gap. Done/Skip
-  buttons answer the current block (or, in a gap, the last unanswered one).
-  It can't be swiped away; on Android 14+ a swipe makes it come straight back.
-- **Reminders** (channel "Reminders"): the same ones as on Linux, worked out
-  by the same Rust code. "Did you finish …?" has Done/Skip and disappears
-  once the block is answered on any device. Quiet hours stop them.
+- **One notification, only while there is something to show.** While a
+  block runs: the block, a progress bar, time left and the next block, with
+  Done/Skip. It can't be swiped away (on Android 14+ it comes straight back).
+  In free time there is no notification at all and the service stops.
+- **Reminders** (the same ones as on Linux, worked out by the same Rust code)
+  take over that one notification instead of piling up: "Gym in 5 min",
+  the block starting, or "Did you finish Study?" with Done/Skip — which
+  stays until it's answered on any device, or for 15 minutes. Quiet hours
+  stop them; channel "Reminders" controls the sound.
 - **Exact alarms** at every block boundary and reminder, so all of this
   happens on time with the app closed and the phone in Doze. The
   `USE_EXACT_ALARM` permission is granted at install.
-- **Restart** after a reboot or app update; re-planning after a time-zone
-  or clock change.
-- **Sync** runs inside the service once you log in on the Settings screen.
+- **After a reboot**, an app update or a clock change, the next alarm is set
+  again.
+- **Sync** runs while the app or the service is up, and catches up at each
+  alarm, once you log in on the Settings screen.
   The login form is pre-filled with the project from the repo's `.env`
   (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`) at build time.
 
@@ -127,6 +131,10 @@ hears about the other device's changes through Realtime, and does a catch-up
 pull on start and every 15 minutes. Offline, everything keeps working from the
 local database and queued changes go out when the connection is back.
 
+Updating: when a new version adds a table (e.g. `focus_sessions`), paste
+`supabase/schema.sql` into the SQL Editor again. It is safe to re-run. Until
+then that table stays local and everything else keeps syncing.
+
 Conflicts: last write wins per row. Copying a template into a new day and
 marking blocks Missed don't count as writes, so they never override a
 Done/Skip from the other device.
@@ -155,6 +163,21 @@ names.
 | Middle click | Mark the current block Skipped |
 
 In a gap, Done/Skip apply to the most recent block that ended without an answer.
+
+`timlo --add-task` opens the app on Tasks with the input ready; `timlo --focus`
+starts a Focus session that runs until the current block ends. Bind them to
+keys or Waybar clicks as you like. On Android, the home-screen widget has the
+same two buttons and the notification has a Focus button.
+
+**Focus** plays the music folder shuffled (Settings → General), or generated
+brown, pink or white noise; with no music it falls back to brown noise. Each
+session is logged and shows up in Calendar: the week recap, the activity map
+tooltips and the yearly total. A summary of the week is also sent as a
+notification on Sunday at 20:00.
+
+**Missed or skipped blocks** get "→ Later today" and "→ Tomorrow" in Today: a
+copy goes into the first free slot of the same length, and the original keeps
+its record.
 
 ```text
 plannerd today [--date 2026-11-03]   print a day's plan

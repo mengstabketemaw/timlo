@@ -1,5 +1,11 @@
 <script lang="ts">
   import { api, errText, type Settings, type SyncInfo } from './api'
+  import Templates from './Templates.svelte'
+  import Week from './Week.svelte'
+  import { loadTracks } from './focus.svelte'
+
+  type Section = 'templates' | 'week' | 'general'
+  let section = $state<Section>('templates')
 
   let s = $state<Settings | null>(null)
   let quietOn = $state(false)
@@ -49,6 +55,7 @@
     if (!s) return
     try {
       await api.saveSettings({ ...s, quiet_hours: quietOn ? `${quietFrom}-${quietTo}` : '' })
+      loadTracks()
       saved = 'Saved'
       error = ''
       setTimeout(() => (saved = ''), 1500)
@@ -83,6 +90,17 @@
   }
 </script>
 
+<div class="sections" role="tablist">
+  {#each [['templates', 'Templates'], ['week', 'Week'], ['general', 'General']] as [id, label]}
+    <button role="tab" aria-selected={section === id} class:on={section === id} onclick={() => (section = id as Section)}>{label}</button>
+  {/each}
+</div>
+
+{#if section === 'templates'}
+  <Templates />
+{:else if section === 'week'}
+  <Week />
+{:else}
 {#if error}<p class="error">{error}</p>{/if}
 
 <h2>Reminders</h2>
@@ -125,6 +143,15 @@
     </label>
     <p class="muted small">Clicking the Waybar module again also hides it. This device only.</p>
   </div>
+
+  <h2>Focus</h2>
+  <div class="card form">
+    <label class="num">
+      Music folder
+      <input class="path" bind:value={s.focus_dir} onchange={save} spellcheck="false" />
+    </label>
+    <p class="muted small">Focus shuffles the audio files in this folder (and its subfolders). This device only.</p>
+  </div>
 {/if}
 
 <h2>Sync</h2>
@@ -154,8 +181,33 @@
   {#if syncMsg}<p class="small">{syncMsg}</p>{/if}
   {#if syncErr}<p class="error">{syncErr}</p>{/if}
 </div>
+{/if}
 
 <style>
+  .sections {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+    padding: 0.2rem;
+    border-radius: 8px;
+    background: var(--surface-2);
+    width: fit-content;
+    max-width: 100%;
+  }
+  .sections button {
+    border: none;
+    background: transparent;
+    padding: 0.3rem 0.9rem;
+  }
+  .sections button.on {
+    background: var(--surface);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  }
+  .path {
+    flex: 1;
+    max-width: 22rem;
+  }
   h2 {
     margin: 1.25rem 0 0.5rem;
   }

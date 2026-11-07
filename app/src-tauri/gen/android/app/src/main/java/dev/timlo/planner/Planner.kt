@@ -14,24 +14,40 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 
-/** Builds the notifications and schedules the next wake-up from `Core.tick()`. */
+/**
+ * One notification, only when there is something to show:
+ *
+ * - a block is running → "Study · 25m left", progress, Done / Skip;
+ * - a reminder fired → it takes over the same notification ("Gym in 5 min",
+ *   "Did you finish Study?") and alerts, then gives way to the block again;
+ * - free time with nothing pending → no notification, service stopped. An
+ *   exact alarm brings it back at the next block or reminder.
+ */
 object Planner {
   const val TAG = "timlo"
   private const val CH_NOW = "now"
   private const val CH_ALERTS = "alerts"
   private const val CH_ALERTS_SILENT = "alerts_silent"
   const val NOW_ID = 1
-  private const val ALERT_ID = 2
+  /** Separate reminder notifications from older versions; removed on sight. */
+  private const val OLD_ALERT_ID = 2
 
   const val ACTION_ANSWER = "dev.timlo.planner.ANSWER"
   const val ACTION_REPOST = "dev.timlo.planner.REPOST"
   const val ACTION_WAKE = "dev.timlo.planner.WAKE"
   const val EXTRA_BLOCK = "block_id"
   const val EXTRA_STATUS = "status"
-  const val EXTRA_TAG = "tag"
+
+  /** How long a reminder stays in the notification at most. */
+  private const val NOTICE_MS = 10 * 60_000L
+  private const val ASK_MS = 15 * 60_000L
 
   private val main = Handler(Looper.getMainLooper())
   private var pending: Runnable? = null
+
+  /** What the service shows when it starts; null = nothing to show. */
+  @Volatile var current: Notification? = null
+    private set
 
   /** Refresh soon on the main thread; bursts of changes collapse into one. */
   fun requestRefresh(ctx: Context) {
@@ -44,12 +60,42 @@ object Planner {
     }
   }
 
-  /** Redraw the now notification, post due reminders and set the next alarm. */
+  /** A reminder currently shown in place of the block (kept across process restarts). */
+  private data class Headline(val title: String, val body: String, val blockId: String, val ask: Boolean, val untilMs: Long)
+
+  private fun prefs(ctx: Context) = ctx.getSharedPreferences("planner", Context.MODE_PRIVATE)
+
+  private fun loadHeadline(ctx: Context): Headline? {
+    val p = prefs(ctx)
+    val title = p.getString("h_title", null) ?: return null
+    return Headline(title, p.getString("h_body", "")!!, p.getString("h_block", "")!!, p.getBoolean("h_ask", false), p.getLong("h_until", 0))
+  }
+
+  private fun saveHeadline(ctx: Context, h: Headline?) {
+    val e = prefs(ctx).edit()
+    if (h == null) {
+      e.remove("h_title").remove("h_body").remove("h_block").remove("h_ask").remove("h_until")
+    } else {
+      e.putString("h_title", h.title).putString("h_body", h.body).putString("h_block", h.blockId)
+        .putBoolean("h_ask", h.ask).putLong("h_until", h.untilMs)
+    }
+    e.apply()
+  }
+
+  /** Done / Skip was recorded for `blockId`: drop its question. */
+  fun answered(ctx: Context, blockId: String) {
+    val h = loadHeadline(ctx)
+    if (h != null && (blockId.isEmpty() || h.blockId == blockId)) saveHeadline(ctx, null)
+  }
+
+  /** Recompute, post or remove the notification, start/stop the service and set the next alarm. */
   @Synchronized
-  fun refresh(ctx: Context): Notification {
+  fun refresh(ctx: Context): Notification? {
     Core.ensureInit(ctx)
     ensureChannels(ctx)
     val nm = ctx.getSystemService(NotificationManager::class.java)
+    for (sbn in nm.activeNotifications) if (sbn.id == OLD_ALERT_ID) nm.cancel(sbn.tag, OLD_ALERT_ID)
+
     val json = try {
       JSONObject(Core.tick())
     } catch (e: Exception) {
@@ -57,22 +103,105 @@ object Planner {
     }
     if (json.has("error")) {
       Log.e(TAG, "tick: ${json.optString("error")}")
-      val n = base(ctx, CH_NOW).setContentTitle("timlo").setContentText(json.optString("error")).setOngoing(true).build()
-      nm.notify(NOW_ID, n)
       schedule(ctx, System.currentTimeMillis() + 60_000)
-      return n
+      return current
     }
+    val now = System.currentTimeMillis()
+    val card = json.getJSONObject("card")
+    val active = card.optString("state") == "active"
 
+    // Reminders due this minute: the last one becomes the headline.
+    var alert: JSONObject? = null
     val alerts = json.optJSONArray("alerts")
     if (alerts != null) {
-      for (i in 0 until alerts.length()) postAlert(ctx, nm, alerts.getJSONObject(i))
+      for (i in 0 until alerts.length()) {
+        val a = alerts.getJSONObject(i)
+        alert = a
+        if (a.optString("kind") != "start") {
+          val ask = a.optBoolean("ask")
+          val life = if (ask) ASK_MS else minOf(if (a.isNull("timeout_ms")) NOTICE_MS else a.getLong("timeout_ms"), NOTICE_MS)
+          saveHeadline(ctx, Headline(a.getString("title"), a.optString("body"), a.getString("block_id"), ask, now + life))
+        }
+      }
     }
-    withdrawAnswered(nm)
+    var headline = loadHeadline(ctx)
+    if (headline != null && (now >= headline.untilMs || (headline.ask && !Core.blockOpen(headline.blockId)))) {
+      saveHeadline(ctx, null)
+      headline = null
+    }
 
-    val n = nowNotification(ctx, json.getJSONObject("card"))
-    nm.notify(NOW_ID, n)
-    schedule(ctx, json.getLong("next_wake_ms"))
+    val n = when {
+      headline != null -> build(ctx, headline, card, active, alert)
+      active -> build(ctx, null, card, true, alert)
+      else -> null
+    }
+    current = n
+    if (n == null) {
+      nm.cancel(NOW_ID)
+      PlannerService.stop(ctx)
+    } else {
+      nm.notify(NOW_ID, n)
+      PlannerService.start(ctx)
+    }
+    // Wake for the next change, or when the headline should go.
+    var wake = json.getLong("next_wake_ms")
+    if (headline != null) wake = minOf(wake, headline.untilMs)
+    schedule(ctx, wake)
     return n
+  }
+
+  private fun build(ctx: Context, h: Headline?, card: JSONObject, active: Boolean, alert: JSONObject?): Notification {
+    val silent = alert == null || alert.optBoolean("silent")
+    val channel = when {
+      alert == null -> CH_NOW
+      silent -> CH_ALERTS_SILENT
+      else -> CH_ALERTS
+    }
+    val b = NotificationCompat.Builder(ctx, channel)
+      .setSmallIcon(R.drawable.ic_stat_timlo)
+      .setContentIntent(openApp(ctx))
+      .setOngoing(true)
+      .setShowWhen(false)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+      // Android 14+ lets ongoing notifications be swiped; put it straight back.
+      .setDeleteIntent(broadcast(ctx, ACTION_REPOST, 1))
+    if (alert == null) {
+      // Plain minute update: no sound, no pop-up.
+      b.setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW)
+        .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+    } else {
+      b.setOnlyAlertOnce(false).setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setCategory(NotificationCompat.CATEGORY_REMINDER)
+      if (!silent) b.setDefaults(NotificationCompat.DEFAULT_ALL)
+    }
+
+    if (h != null) {
+      b.setContentTitle(h.title)
+      // While a block runs, keep it visible under the reminder.
+      b.setContentText(if (active) card.optString("title") else h.body.ifEmpty { null })
+      if (active && !card.isNull("progress")) b.setProgress(100, card.getInt("progress"), false)
+      if (h.ask) {
+        b.addAction(0, "Done", answerIntent(ctx, h.blockId, "done"))
+        b.addAction(0, "Skip", answerIntent(ctx, h.blockId, "skipped"))
+      } else if (active && !card.isNull("target")) {
+        b.addAction(0, "Done", answerIntent(ctx, "", "done"))
+        b.addAction(0, "Skip", answerIntent(ctx, "", "skipped"))
+      }
+      if (active && !h.ask) b.addAction(0, "Focus", openAction(ctx, ACTION_FOCUS))
+    } else {
+      b.setContentTitle(card.optString("title"))
+        .setContentText(card.optString("text").ifEmpty { null })
+        .setSubText(card.optString("sub").ifEmpty { null })
+      if (!card.isNull("progress")) b.setProgress(100, card.getInt("progress"), false)
+      if (!card.isNull("target")) {
+        // Empty id = "the card's block" at tap time, so a stale button can't hit the wrong block.
+        b.addAction(0, "Done", answerIntent(ctx, "", "done"))
+        b.addAction(0, "Skip", answerIntent(ctx, "", "skipped"))
+      }
+      if (active) b.addAction(0, "Focus", openAction(ctx, ACTION_FOCUS))
+    }
+    return b.build()
   }
 
   private fun ensureChannels(ctx: Context) {
@@ -81,7 +210,7 @@ object Planner {
     if (nm.getNotificationChannel(CH_NOW) != null) return
     nm.createNotificationChannel(
       NotificationChannel(CH_NOW, "Now", NotificationManager.IMPORTANCE_LOW).apply {
-        description = "What you should be doing right now"
+        description = "The current block, updated quietly"
         setShowBadge(false)
       })
     nm.createNotificationChannel(
@@ -96,10 +225,18 @@ object Planner {
       })
   }
 
-  private fun base(ctx: Context, channel: String) =
-    NotificationCompat.Builder(ctx, channel)
-      .setSmallIcon(R.drawable.ic_stat_timlo)
-      .setContentIntent(openApp(ctx))
+  const val EXTRA_ACTION = "timlo.action"
+  const val ACTION_FOCUS = "focus"
+  const val ACTION_ADD_TASK = "add-task"
+
+  /** Open the app on a screen: "focus" starts a session for the current block, "add-task" opens quick add. */
+  fun openAction(ctx: Context, action: String): PendingIntent {
+    val i = Intent(ctx, MainActivity::class.java)
+      .setAction("dev.timlo.planner.$action")
+      .putExtra(EXTRA_ACTION, action)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    return PendingIntent.getActivity(ctx, action.hashCode(), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+  }
 
   private fun openApp(ctx: Context): PendingIntent {
     val i = Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -111,68 +248,11 @@ object Planner {
     return PendingIntent.getBroadcast(ctx, code, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
   }
 
-  private fun answerIntent(ctx: Context, blockId: String, status: String, tag: String?): PendingIntent =
-    broadcast(ctx, ACTION_ANSWER, "$blockId|$status|$tag".hashCode()) {
+  private fun answerIntent(ctx: Context, blockId: String, status: String): PendingIntent =
+    broadcast(ctx, ACTION_ANSWER, "$blockId|$status".hashCode()) {
       putExtra(EXTRA_BLOCK, blockId)
       putExtra(EXTRA_STATUS, status)
-      if (tag != null) putExtra(EXTRA_TAG, tag)
     }
-
-  private fun nowNotification(ctx: Context, card: JSONObject): Notification {
-    val b = base(ctx, CH_NOW)
-      .setContentTitle(card.optString("title"))
-      .setContentText(card.optString("text"))
-      .setSubText(card.optString("sub").ifEmpty { null })
-      .setOngoing(true)
-      .setOnlyAlertOnce(true)
-      .setSilent(true)
-      .setShowWhen(false)
-      .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-      .setPriority(NotificationCompat.PRIORITY_LOW)
-      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-      .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-      // Android 14+ lets ongoing notifications be swiped; put it straight back.
-      .setDeleteIntent(broadcast(ctx, ACTION_REPOST, 1))
-    if (!card.isNull("progress")) b.setProgress(100, card.getInt("progress"), false)
-    if (!card.isNull("target")) {
-      // Empty id = "the card's block" at tap time, so a stale button can't hit the wrong block.
-      b.addAction(0, "Done", answerIntent(ctx, "", "done", null))
-      b.addAction(0, "Skip", answerIntent(ctx, "", "skipped", null))
-    }
-    return b.build()
-  }
-
-  private fun postAlert(ctx: Context, nm: NotificationManager, a: JSONObject) {
-    val tag = a.getString("tag")
-    val blockId = a.getString("block_id")
-    val b = base(ctx, if (a.optBoolean("silent")) CH_ALERTS_SILENT else CH_ALERTS)
-      .setContentTitle(a.getString("title"))
-      .setContentText(a.optString("body").ifEmpty { null })
-      .setAutoCancel(true)
-      .setCategory(NotificationCompat.CATEGORY_REMINDER)
-      .setPriority(NotificationCompat.PRIORITY_HIGH)
-      .setDefaults(if (a.optBoolean("silent")) 0 else NotificationCompat.DEFAULT_ALL)
-    if (!a.isNull("timeout_ms")) b.setTimeoutAfter(a.getLong("timeout_ms"))
-    if (a.optBoolean("ask")) {
-      b.addAction(0, "Done", answerIntent(ctx, blockId, "done", tag))
-      b.addAction(0, "Skip", answerIntent(ctx, blockId, "skipped", tag))
-    }
-    nm.notify(tag, ALERT_ID, b.build())
-  }
-
-  /** "Did you finish…?" prompts answered here, in the app or on the PC. */
-  private fun withdrawAnswered(nm: NotificationManager) {
-    for (sbn in nm.activeNotifications) {
-      val tag = sbn.tag ?: continue
-      if (sbn.id == ALERT_ID && tag.startsWith("ask:") && !Core.blockOpen(tag.removePrefix("ask:"))) {
-        nm.cancel(tag, ALERT_ID)
-      }
-    }
-  }
-
-  fun cancelAlert(ctx: Context, tag: String) {
-    ctx.getSystemService(NotificationManager::class.java).cancel(tag, ALERT_ID)
-  }
 
   /** One exact alarm at the next change; it fires with the app closed and in Doze. */
   private fun schedule(ctx: Context, atMs: Long) {

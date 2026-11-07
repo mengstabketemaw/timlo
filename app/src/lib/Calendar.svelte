@@ -1,5 +1,7 @@
 <script lang="ts">
   import DayView from './DayView.svelte'
+  import Activity from './Activity.svelte'
+  import WeekRecap from './WeekRecap.svelte'
   import { api, errText, isoDate, parseIso, type MonthDay } from './api'
 
   let { refreshKey = 0 }: { refreshKey?: number } = $props()
@@ -10,6 +12,7 @@
   let days = $state<MonthDay[]>([])
   let selected = $state(today)
   let error = $state('')
+  let edits = $state(0)
 
   async function load() {
     try {
@@ -46,6 +49,9 @@
 </script>
 
 {#if error}<p class="error">{error}</p>{/if}
+
+<WeekRecap refreshKey={refreshKey + edits} />
+<Activity refreshKey={refreshKey + edits} />
 
 <div class="layout">
   <section class="card cal">
@@ -86,7 +92,7 @@
 
   <section class="day">
     {#key selected}
-      <DayView date={selected} {refreshKey} onchange={load} />
+      <DayView date={selected} {refreshKey} onchange={() => (load(), edits++)} />
     {/key}
   </section>
 </div>

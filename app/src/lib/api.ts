@@ -81,6 +81,46 @@ export interface Settings {
   sound: boolean
   /** Desktop: hide the window when it loses focus (this device only). */
   hide_on_blur: boolean
+  /** Folder the Focus tab plays music from (this device only). */
+  focus_dir: string
+}
+
+export interface ActivityDay {
+  date: string
+  total: number
+  done: number
+  skipped: number
+  missed: number
+  /** Minutes of Focus sessions started that day. */
+  focus_min: number
+}
+
+export interface WeekSummary {
+  from: string
+  to: string
+  planned: number
+  done: number
+  skipped: number
+  missed: number
+  focus_min: number
+  best_day: string | null
+  top_done: { title: string; count: number } | null
+  most_dropped: { title: string; count: number } | null
+  prev_pct: number | null
+}
+
+export interface FocusSession {
+  id: string
+  date: string
+  started_at: number
+  minutes: number
+  block_title: string | null
+}
+
+export interface FocusTracks {
+  dir: string
+  tracks: string[]
+  problem: string | null
 }
 
 export interface SyncInfo {
@@ -113,6 +153,14 @@ export const api = {
     invoke<void>('update_day_block', { id, startMin, endMin, title, note }),
   deleteDayBlock: (id: string) => invoke<void>('delete_day_block', { id }),
   month: (year: number, month: number) => invoke<MonthDay[]>('get_month', { year, month }),
+  activity: (from: string, to: string) => invoke<ActivityDay[]>('get_activity', { from, to }),
+  weekSummary: (date: string) => invoke<WeekSummary>('week_summary', { date }),
+  saveFocusSession: (session: FocusSession) => invoke<void>('save_focus_session', { session }),
+  moveBlock: (id: string, to: string) => invoke<DayBlock>('move_block', { id, to }),
+  takeLaunchAction: () => invoke<string | null>('take_launch_action'),
+  focusTracks: () => invoke<FocusTracks>('focus_tracks'),
+  focusRead: (path: string, offset: number, len: number) =>
+    invoke<{ data: string; size: number }>('focus_read', { path, offset, len }),
   templates: () => invoke<Template[]>('list_templates'),
   createTemplate: (name: string) => invoke<Template>('create_template', { name }),
   renameTemplate: (id: string, name: string) => invoke<void>('rename_template', { id, name }),

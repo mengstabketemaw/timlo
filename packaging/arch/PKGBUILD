@@ -7,7 +7,8 @@ pkgrel=1
 pkgdesc="Day planner: Waybar module, desktop reminders and a planner app, synced with your phone"
 arch=('x86_64' 'aarch64')
 license=('MIT')
-depends=('webkit2gtk-4.1' 'gtk3' 'libnotify' 'gcc-libs' 'glibc')
+depends=('webkit2gtk-4.1' 'gtk3' 'libnotify' 'gcc-libs' 'glibc'
+         'gst-plugins-base' 'gst-plugins-good' 'gst-libav')  # gst: Focus tab audio
 makedepends=('cargo' 'nodejs' 'npm')
 optdepends=('waybar: the status bar module'
             'hyprland: floating popup window rules (see /usr/share/doc/timlo)')

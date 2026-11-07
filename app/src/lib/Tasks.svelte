@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ui } from './ui.svelte'
   import { flip } from 'svelte/animate'
   import { fade, slide } from 'svelte/transition'
   import { api, errText, type Task } from './api'
@@ -21,6 +22,14 @@
   let error = $state('')
 
   let newTitle = $state('')
+  let newInput = $state<HTMLInputElement>()
+
+  // Quick add (Waybar right-click, the Android widget): focus the box.
+  $effect(() => {
+    if (ui.quickAdd && newInput) {
+      newInput.focus()
+    }
+  })
   let openId = $state<string | null>(null)
   let draft = $state({ title: '', notes: '' })
   let newStep = $state('')
@@ -171,7 +180,7 @@
 
 <form class="add" onsubmit={add}>
   <span class="plus" aria-hidden="true">+</span>
-  <input bind:value={newTitle} placeholder="Add a task…" aria-label="New task" enterkeyhint="done" />
+  <input bind:this={newInput} bind:value={newTitle} placeholder="Add a task…" aria-label="New task" enterkeyhint="done" />
 </form>
 
 {#if loaded && tasks.length === 0}

@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name">"timlo"</string>
     <string name="main_activity_title">"timlo"</string>
+    <string name="widget_add_task">+ Task</string>
+    <string name="widget_focus">Focus</string>
+    <string name="widget_description">Add a task or start focusing</string>
 </resources>

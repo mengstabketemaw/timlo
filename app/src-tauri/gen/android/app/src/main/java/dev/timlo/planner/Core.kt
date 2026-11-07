@@ -36,6 +36,9 @@ object Core {
 
   @JvmStatic external fun startSync()
 
+  /** Tell the UI to open a screen ("focus", "add-task"); it picks this up when it gets focus. */
+  @JvmStatic external fun setLaunchAction(action: String)
+
   /** Called by Rust (any thread) after a local change or a sync pull. */
   @JvmStatic
   fun onNativeChange() {

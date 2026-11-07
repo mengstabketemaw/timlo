@@ -1,6 +1,7 @@
 package dev.timlo.planner
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -14,16 +15,31 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     // Before the Tauri side opens the database.
     Core.ensureInit(this)
+    takeAction(intent)
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     keepClearOfSystemBars()
 
-    if (Build.VERSION.SDK_INT >= 33 &&
-      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-    ) {
-      ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+    // Notifications, and reading the Focus music folder.
+    val wanted = if (Build.VERSION.SDK_INT >= 33)
+      arrayOf(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.READ_MEDIA_AUDIO)
+    else
+      arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    val missing = wanted.filter {
+      ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
     }
-    PlannerService.start(this)
+    if (missing.isNotEmpty()) ActivityCompat.requestPermissions(this, missing.toTypedArray(), 1)
+    Planner.requestRefresh(this)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    takeAction(intent)
+  }
+
+  /** From the widget or the notification's Focus button. */
+  private fun takeAction(intent: Intent?) {
+    intent?.getStringExtra(Planner.EXTRA_ACTION)?.let { Core.setLaunchAction(it) }
   }
 
   /**

@@ -55,7 +55,7 @@ impl Store {
         ))?;
         let mut tasks: Vec<Task> = st.query_map([include_done], row)?.collect::<rusqlite::Result<_>>()?;
         let mut sub = self.conn.prepare(&format!(
-            "SELECT {COLS} FROM tasks WHERE deleted = 0 AND parent_id = ?1 ORDER BY created_at, id"
+            "SELECT {COLS} FROM tasks WHERE deleted = 0 AND parent_id = ?1 ORDER BY created_at, rowid"
         ))?;
         for t in &mut tasks {
             t.subtasks = sub.query_map([&t.id], row)?.collect::<rusqlite::Result<_>>()?;

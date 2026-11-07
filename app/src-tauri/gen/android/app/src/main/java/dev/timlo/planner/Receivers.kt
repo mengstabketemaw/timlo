@@ -9,35 +9,28 @@ import android.util.Log
 class AlarmReceiver : BroadcastReceiver() {
   override fun onReceive(ctx: Context, intent: Intent) {
     Planner.refresh(ctx)
-    // Restart the service if the system killed it (alarms may start one).
-    PlannerService.start(ctx)
+    // The service (and with it sync) only runs while a block does; catch up here.
+    Core.startSync()
   }
 }
 
-/** Done / Skip buttons, and re-posting a swiped-away now notification. */
+/** Done / Skip buttons, and re-posting a swiped-away notification. */
 class ActionReceiver : BroadcastReceiver() {
   override fun onReceive(ctx: Context, intent: Intent) {
     Core.ensureInit(ctx)
-    when (intent.action) {
-      Planner.ACTION_ANSWER -> {
-        val err = Core.answer(
-          intent.getStringExtra(Planner.EXTRA_BLOCK) ?: "",
-          intent.getStringExtra(Planner.EXTRA_STATUS) ?: return,
-        )
-        if (err.isNotEmpty()) Log.e(Planner.TAG, "answer: $err")
-        intent.getStringExtra(Planner.EXTRA_TAG)?.let { Planner.cancelAlert(ctx, it) }
-      }
+    if (intent.action == Planner.ACTION_ANSWER) {
+      val block = intent.getStringExtra(Planner.EXTRA_BLOCK) ?: ""
+      val status = intent.getStringExtra(Planner.EXTRA_STATUS) ?: return
+      val err = Core.answer(block, status)
+      if (err.isNotEmpty()) Log.e(Planner.TAG, "answer: $err") else Planner.answered(ctx, block)
     }
     Planner.refresh(ctx)
   }
 }
 
-/** Start again after a reboot or an update; re-plan after a clock change. */
+/** Re-plan after a reboot, an update or a clock change. */
 class BootReceiver : BroadcastReceiver() {
   override fun onReceive(ctx: Context, intent: Intent) {
-    when (intent.action) {
-      Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> PlannerService.start(ctx)
-      else -> Planner.refresh(ctx)
-    }
+    Planner.refresh(ctx)
   }
 }

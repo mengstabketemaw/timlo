@@ -153,3 +153,15 @@ pub extern "system" fn Java_dev_timlo_planner_Core_blockOpen<'l>(
 pub extern "system" fn Java_dev_timlo_planner_Core_startSync<'l>(_env: JNIEnv<'l>, _class: JClass<'l>) {
     ensure_sync();
 }
+
+/// The widget or notification asked the UI to open a screen ("focus", "add-task").
+#[no_mangle]
+pub extern "system" fn Java_dev_timlo_planner_Core_setLaunchAction<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    action: JString<'l>,
+) {
+    if let Ok(a) = env.get_string(&action) {
+        crate::set_launch_action(&String::from(a));
+    }
+}

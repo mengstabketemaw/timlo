@@ -3,9 +3,10 @@
 //! tested on the desktop).
 
 use anyhow::Result;
-use chrono::{Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use planner_core::now::{action_target, now_view};
 use planner_core::reminders::{self, ReminderKind};
+use planner_core::summary;
 use planner_core::time::{fmt_dur, fmt_hm, minute_of};
 use planner_core::{DayBlock, Settings, Status, Store};
 use serde::Serialize;
@@ -14,7 +15,9 @@ use serde::Serialize;
 const LAST_TICK_KEY: &str = "local.phone.last_tick";
 const LAST_TICK_FMT: &str = "%Y-%m-%d %H:%M";
 
-/// The ongoing "now" notification.
+/// The ongoing "now" notification. Shown only while a block is running
+/// (`state == "active"`); in a gap the phone shows nothing unless a reminder
+/// is up.
 #[derive(Debug, Serialize)]
 pub struct Card {
     /// "Study · 25m left" or "Free until 14:00".
@@ -38,6 +41,8 @@ pub struct Alert {
     /// which are withdrawn once the block has an answer (on any device).
     pub tag: String,
     pub block_id: String,
+    /// `start`, `before_start`, `before_end` or `unfinished`.
+    pub kind: &'static str,
     pub title: String,
     pub body: String,
     /// Offer Done / Skip.
@@ -92,14 +97,41 @@ pub fn tick(store: &Store, now: NaiveDateTime) -> Result<Tick> {
                 secs.max(1) * 1000
             });
             let tag = if r.ask { format!("ask:{}", r.block_id) } else { format!("rem:{}:{:?}", r.block_id, r.kind) };
+            let kind = match r.kind {
+                ReminderKind::Start => "start",
+                ReminderKind::BeforeStart => "before_start",
+                ReminderKind::BeforeEnd => "before_end",
+                ReminderKind::Unfinished => "unfinished",
+            };
             alerts.push(Alert {
                 tag,
                 block_id: r.block_id,
+                kind,
                 title: r.summary,
                 body: r.body,
                 ask: r.ask,
                 silent: !settings.sound,
                 timeout_ms,
+            });
+        }
+    }
+
+    // Sunday evening: how the week went.
+    if from <= m
+        && !settings.is_quiet(m)
+        && today.weekday() == chrono::Weekday::Sun
+        && (from..=m).contains(&summary::RECAP_MIN)
+    {
+        if let Some((title, body)) = summary::recap_text(&summary::week(store, today)?) {
+            alerts.push(Alert {
+                tag: format!("recap:{today}"),
+                block_id: String::new(),
+                kind: "recap",
+                title,
+                body,
+                ask: false,
+                silent: !settings.sound,
+                timeout_ms: Some(30 * 60_000),
             });
         }
     }
@@ -158,6 +190,9 @@ fn next_wake(blocks: &[DayBlock], s: &Settings, now: NaiveDateTime) -> i64 {
         points.extend([b.start_min, b.end_min]);
         points.extend(b.start_min.checked_sub(s.remind_before_start).filter(|_| s.remind_before_start > 0));
         points.extend(b.end_min.checked_sub(s.remind_before_end).filter(|_| s.remind_before_end > 0));
+    }
+    if now.date().weekday() == chrono::Weekday::Sun {
+        points.push(summary::RECAP_MIN);
     }
     // Quiet hours ending don't need a wake: nothing fires late.
     let at = match points.into_iter().filter(|&p| p > m && p < 24 * 60).min() {

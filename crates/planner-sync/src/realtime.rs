@@ -25,13 +25,22 @@ const TOKEN_MARGIN_SECS: i64 = 120;
 pub fn run(client: Arc<Mutex<Client>>, on_change: impl Fn()) {
     let mut backoff = Duration::from_secs(5);
     let mut last_err = String::new();
+    let mut skip: Vec<String> = Vec::new();
     loop {
         if !session_path().exists() {
             return;
         }
         let started = Instant::now();
-        match listen(&client, &on_change) {
+        match listen(&client, &on_change, &skip) {
             Ok(()) => last_err.clear(),
+            // The server lacks a table (schema not updated yet): leave it
+            // out and reconnect straight away, so the rest stays live.
+            Err(e) if missing_table(&e).is_some() => {
+                let t = missing_table(&e).unwrap_or_default();
+                eprintln!("plannerd: realtime: the server has no {t:?} table yet; run supabase/schema.sql again");
+                skip.push(t);
+                continue;
+            }
             Err(e) => {
                 let msg = format!("{e:#}");
                 if msg != last_err {
@@ -65,7 +74,18 @@ fn send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, v: Value) -> Result<()> {
 }
 
 /// One connection, until the token needs renewing (Ok) or something fails.
-fn listen(client: &Arc<Mutex<Client>>, on_change: &impl Fn()) -> Result<()> {
+/// Name of the synced table a realtime error says doesn't exist.
+fn missing_table(e: &anyhow::Error) -> Option<String> {
+    let msg = format!("{e:#}");
+    if !msg.contains("Unable to subscribe") {
+        return None;
+    }
+    let rest = &msg[msg.find("table: ")? + "table: ".len()..];
+    let name = rest.split([',', ']', ' ']).next()?;
+    TABLES.iter().any(|t| t.name == name).then(|| name.to_string())
+}
+
+fn listen(client: &Arc<Mutex<Client>>, on_change: &impl Fn(), skip: &[String]) -> Result<()> {
     let (url, key, token, expires_at) = {
         let mut c = client.lock().map_err(|_| anyhow!("client lock poisoned"))?;
         let token = c.token_valid_for(TOKEN_MARGIN_SECS * 3)?;
@@ -79,7 +99,11 @@ fn listen(client: &Arc<Mutex<Client>>, on_change: &impl Fn()) -> Result<()> {
     set_read_timeout(&ws);
 
     let changes: Vec<Value> =
-        TABLES.iter().map(|t| json!({ "event": "*", "schema": "public", "table": t.name })).collect();
+        TABLES
+            .iter()
+            .filter(|t| !skip.iter().any(|s| s == t.name))
+            .map(|t| json!({ "event": "*", "schema": "public", "table": t.name }))
+            .collect();
     send(
         &mut ws,
         json!({
@@ -129,5 +153,17 @@ fn listen(client: &Arc<Mutex<Client>>, on_change: &impl Fn()) -> Result<()> {
                 if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
             Err(e) => return Err(e.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spots_missing_table() {
+        let e = anyhow!("realtime error: \"Unable to subscribe to changes with given parameters. Please check Realtime is enabled for the given connect parameters: [event: *, schema: public, table: focus_sessions, filters: [], select: nil]\"");
+        assert_eq!(missing_table(&e).as_deref(), Some("focus_sessions"));
+        assert_eq!(missing_table(&anyhow!("server closed the connection")), None);
     }
 }

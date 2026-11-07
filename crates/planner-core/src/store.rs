@@ -91,6 +91,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     deleted     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS tasks_parent ON tasks (parent_id);
+CREATE TABLE IF NOT EXISTS focus_sessions (
+    id          TEXT PRIMARY KEY,
+    date        TEXT NOT NULL,         -- local YYYY-MM-DD the session started on
+    started_at  INTEGER NOT NULL,      -- unix ms
+    minutes     INTEGER NOT NULL,      -- time actually spent playing
+    block_title TEXT,                  -- the plan block it ran during, if any
+    updated_at  INTEGER NOT NULL,
+    deleted     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS focus_sessions_date ON focus_sessions (date);
 "#;
 
 /// Copy a template block into a day. Re-copying keeps the Done/Skip status,
@@ -147,6 +157,24 @@ pub fn weekday_num(d: NaiveDate) -> u8 {
 /// create the same day offline produce identical rows instead of duplicates.
 pub fn day_block_id(date: NaiveDate, template_block_id: &str) -> String {
     format!("{}#{}", date_key(date), template_block_id)
+}
+
+/// First start ≥ `from` where `len` minutes fit between the `taken` spans
+/// and before midnight.
+fn free_slot(taken: &[(u16, u16)], from: u16, len: u16) -> Option<u16> {
+    let mut spans = taken.to_vec();
+    spans.sort();
+    let mut cursor = from;
+    for (s, e) in spans {
+        if e <= cursor {
+            continue;
+        }
+        if s >= cursor + len {
+            break;
+        }
+        cursor = cursor.max(e);
+    }
+    (cursor + len <= 24 * 60).then_some(cursor)
 }
 
 fn conv_err(msg: String) -> rusqlite::Error {
@@ -777,6 +805,47 @@ impl Store {
         })
     }
 
+    /// Copy a block into the first free slot of the same length on `to`
+    /// (today: from now on; a later day: from the block's own time, else
+    /// from the start of the day). The original keeps its record (missed,
+    /// skipped …) so history stays honest. Returns the new block.
+    pub fn move_block(&self, id: &str, to: NaiveDate, now: NaiveDateTime) -> Result<DayBlock> {
+        self.with_tx(|s| {
+            let b = s.day_block(id)?.context("no such block")?;
+            let today = now.date();
+            if to < today {
+                bail!("can't move a block into the past");
+            }
+            s.ensure_day_in(to, now)?;
+            let len = b.end_min - b.start_min;
+            let taken: Vec<(u16, u16)> = s
+                .day_blocks(to)?
+                .iter()
+                .filter(|o| o.id != b.id)
+                .map(|o| (o.start_min, o.end_min))
+                .collect();
+            let start = if to == today {
+                // Next 5-minute mark from now.
+                let m = minute_of(&now);
+                free_slot(&taken, m.div_ceil(5) * 5, len)
+            } else {
+                free_slot(&taken, b.start_min, len).or_else(|| free_slot(&taken, 0, len))
+            };
+            let Some(start) = start else {
+                bail!("no free {} min slot {}", len, if to == today { "left today" } else { "that day" });
+            };
+            let new_id = new_id();
+            s.conn.execute(
+                "INSERT INTO day_blocks (id, date, template_block_id, start_min, end_min, title, note,
+                                         status, status_at, updated_at, deleted)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, 'pending', NULL, ?7, 0)",
+                params![new_id, date_key(to), start, start + len, b.title, b.note, stamp()],
+            )?;
+            s.mark_customised(to)?;
+            s.day_block(&new_id)?.context("moved block missing after save")
+        })
+    }
+
     // ------------------------------------------------------------ status
 
     pub fn set_status(&self, id: &str, status: Status) -> Result<DayBlock> {
@@ -823,5 +892,45 @@ impl Store {
             params![key, value, stamp()],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    fn input(title: &str, start: u16, end: u16) -> BlockInput {
+        BlockInput { id: None, start_min: start, end_min: end, title: title.into(), note: None, icon: None, colour: None }
+    }
+
+    #[test]
+    fn free_slot_finds_gaps() {
+        assert_eq!(free_slot(&[], 600, 60), Some(600));
+        assert_eq!(free_slot(&[(600, 660), (690, 720)], 600, 60), Some(720));
+        assert_eq!(free_slot(&[(600, 660), (720, 780)], 600, 60), Some(660));
+        assert_eq!(free_slot(&[(0, 1400)], 0, 60), None);
+    }
+
+    #[test]
+    fn move_missed_block_later_today_and_tomorrow() {
+        let s = Store::open_in_memory().unwrap();
+        let now = d("2026-11-07").and_hms_opt(11, 2, 0).unwrap();
+        let study = s.add_day_block(d("2026-11-07"), input("Study", 540, 600), now).unwrap();
+        s.add_day_block(d("2026-11-07"), input("Lunch", 720, 780), now).unwrap();
+        s.set_status(&study.id, Status::Missed).unwrap();
+
+        // 11:05 is the next 5-minute mark; 11:05–12:05 clashes with lunch at 12:00.
+        let later = s.move_block(&study.id, d("2026-11-07"), now).unwrap();
+        assert_eq!((later.start_min, later.end_min), (780, 840));
+        assert_eq!(later.status, Status::Pending);
+        assert_eq!(s.day_block(&study.id).unwrap().unwrap().status, Status::Missed);
+
+        let tomorrow = s.move_block(&study.id, d("2026-11-08"), now).unwrap();
+        assert_eq!((tomorrow.date, tomorrow.start_min), (d("2026-11-08"), 540));
+        assert!(s.move_block(&study.id, d("2026-11-06"), now).is_err());
     }
 }

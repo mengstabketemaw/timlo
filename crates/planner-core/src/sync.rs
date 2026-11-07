@@ -58,6 +58,11 @@ pub const TABLES: &[TableSpec] = &[
         pk: "id",
         cols: &["id", "parent_id", "title", "notes", "done", "done_at", "created_at", "updated_at", "deleted"],
     },
+    TableSpec {
+        name: "focus_sessions",
+        pk: "id",
+        cols: &["id", "date", "started_at", "minutes", "block_title", "updated_at", "deleted"],
+    },
 ];
 
 pub fn table(name: &str) -> Option<&'static TableSpec> {
@@ -142,10 +147,20 @@ fn from_json(v: Option<&Json>) -> Value {
 impl Store {
     /// Oldest local changes first, at most `limit`.
     pub fn sync_pending(&self, limit: usize) -> Result<Vec<Pending>> {
+        self.sync_pending_except(limit, &[])
+    }
+
+    /// Like `sync_pending`, leaving out tables in `skip` (ones the server
+    /// doesn't have yet); their rows stay queued.
+    pub fn sync_pending_except(&self, limit: usize, skip: &[&str]) -> Result<Vec<Pending>> {
+        let skip_json = serde_json::to_string(skip)?;
         let entries: Vec<(i64, String, String)> = {
-            let mut st = self.conn.prepare("SELECT seq, tbl, pk FROM sync_outbox ORDER BY seq LIMIT ?1")?;
+            let mut st = self.conn.prepare(
+                "SELECT seq, tbl, pk FROM sync_outbox
+                 WHERE tbl NOT IN (SELECT value FROM json_each(?2)) ORDER BY seq LIMIT ?1",
+            )?;
             let v = st
-                .query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .query_map(params![limit as i64, skip_json], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             v
         };

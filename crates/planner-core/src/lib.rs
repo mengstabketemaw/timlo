@@ -10,6 +10,7 @@
 //! - [`sync`]: outbox of local changes and last-write-wins merge of pulled rows.
 //! - [`plan_file`]: the hand-edited TOML plan file (milestone 2).
 
+pub mod focus;
 pub mod model;
 pub mod now;
 pub mod paths;
@@ -17,10 +18,12 @@ pub mod plan_file;
 pub mod reminders;
 pub mod settings;
 pub mod store;
+pub mod summary;
 pub mod sync;
 pub mod tasks;
 pub mod time;
 
+pub use focus::FocusSession;
 pub use model::{BlockInput, Day, DayBlock, Status, Template, TemplateBlock};
 pub use settings::Settings;
 pub use store::Store;

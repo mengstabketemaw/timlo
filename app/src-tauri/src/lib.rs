@@ -13,7 +13,7 @@ use chrono::{Local, NaiveDate, NaiveDateTime};
 use planner_core::store::weekday_num;
 use planner_core::time::minute_of;
 use planner_core::settings::{fmt_quiet_hours, parse_quiet_hours};
-use planner_core::{paths, BlockInput, DayBlock, Settings, Status, Store, Task, Template, TemplateBlock};
+use planner_core::{paths, BlockInput, DayBlock, FocusSession, Settings, Status, Store, Task, Template, TemplateBlock};
 use planner_sync::{LoginOutcome, SyncConfig};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
@@ -266,6 +266,186 @@ fn get_month(state: State<AppState>, year: i32, month: u32) -> CmdResult<Vec<Mon
     })
 }
 
+#[derive(Serialize)]
+struct ActivityDto {
+    date: NaiveDate,
+    total: usize,
+    done: usize,
+    skipped: usize,
+    missed: usize,
+    /// Minutes of Focus sessions started that day.
+    focus_min: u32,
+}
+
+/// Block outcomes and focus time for every day in `[from, to]` that has
+/// either, for the activity map and progress chart.
+#[tauri::command]
+fn get_activity(state: State<AppState>, from: String, to: String) -> CmdResult<Vec<ActivityDto>> {
+    let (from, to) = (parse_date(&from)?, parse_date(&to)?);
+    with_store(&state, |s| {
+        let mut focus = s.focus_minutes(from, to)?;
+        let mut out = Vec::new();
+        for day in s.days_in_range(from, to)? {
+            let blocks = s.day_blocks(day.date)?;
+            let count = |st: Status| blocks.iter().filter(|b| b.status == st).count();
+            out.push(ActivityDto {
+                date: day.date,
+                total: blocks.len(),
+                done: count(Status::Done),
+                skipped: count(Status::Skipped),
+                missed: count(Status::Missed),
+                focus_min: focus.remove(&day.date).unwrap_or(0),
+            });
+        }
+        out.extend(focus.into_iter().map(|(date, focus_min)| ActivityDto {
+            date,
+            total: 0,
+            done: 0,
+            skipped: 0,
+            missed: 0,
+            focus_min,
+        }));
+        out.sort_by_key(|a| a.date);
+        Ok(out)
+    })
+}
+
+#[tauri::command]
+fn week_summary(state: State<AppState>, date: String) -> CmdResult<planner_core::summary::WeekSummary> {
+    let date = parse_date(&date)?;
+    with_store(&state, |s| planner_core::summary::week(s, date))
+}
+
+#[tauri::command]
+fn save_focus_session(state: State<AppState>, session: FocusSession) -> CmdResult<()> {
+    write(&state, |s| s.save_focus_session(&session))
+}
+
+/// Put a (missed) block into the first free slot later today or on `to`.
+#[tauri::command]
+fn move_block(state: State<AppState>, id: String, to: String) -> CmdResult<DayBlock> {
+    let to = parse_date(&to)?;
+    write(&state, |s| s.move_block(&id, to, now()))
+}
+
+// ---- Launch actions --------------------------------------------------------
+// `timlo --add-task` / `--focus` (Waybar right-click, the Android widget and
+// notification) ask the UI to open a screen. Kept until the UI takes it.
+
+static LAUNCH_ACTION: Mutex<Option<String>> = Mutex::new(None);
+
+pub(crate) fn set_launch_action(action: &str) {
+    if let Ok(mut a) = LAUNCH_ACTION.lock() {
+        *a = Some(action.to_string());
+    }
+}
+
+#[cfg(desktop)]
+fn action_from_args(args: &[String]) -> Option<&'static str> {
+    args.iter().find_map(|a| match a.as_str() {
+        "--add-task" => Some("add-task"),
+        "--focus" => Some("focus"),
+        _ => None,
+    })
+}
+
+#[tauri::command]
+fn take_launch_action() -> Option<String> {
+    LAUNCH_ACTION.lock().ok().and_then(|mut a| a.take())
+}
+
+// ------------------------------------------------------------------ focus
+
+/// `local.` = this device only: each device has its own music folder.
+const FOCUS_DIR_KEY: &str = "local.focus.dir";
+
+fn default_focus_dir() -> String {
+    if cfg!(target_os = "android") {
+        "/storage/emulated/0/Music/Focus".into()
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{home}/Music/focus")
+    }
+}
+
+fn focus_dir(s: &Store) -> anyhow::Result<String> {
+    Ok(s.setting(FOCUS_DIR_KEY)?.filter(|d| !d.trim().is_empty()).unwrap_or_else(default_focus_dir))
+}
+
+#[derive(Serialize)]
+struct FocusTracks {
+    dir: String,
+    /// Absolute paths of the audio files found (recursively).
+    tracks: Vec<String>,
+    /// Why nothing could be listed (missing folder, no permission …).
+    problem: Option<String>,
+}
+
+const AUDIO_EXT: &[&str] = &["mp3", "ogg", "oga", "opus", "flac", "wav", "m4a", "aac", "webm"];
+
+fn find_audio(dir: &std::path::Path, out: &mut Vec<String>, depth: u8) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            if depth < 4 {
+                let _ = find_audio(&path, out, depth + 1);
+            }
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| AUDIO_EXT.contains(&e.to_ascii_lowercase().as_str()))
+        {
+            out.push(path.to_string_lossy().into_owned());
+        }
+    }
+    Ok(())
+}
+
+/// The audio files in the focus folder.
+#[tauri::command]
+fn focus_tracks(state: State<AppState>) -> CmdResult<FocusTracks> {
+    let dir = with_store(&state, focus_dir)?;
+    let mut tracks = Vec::new();
+    let problem = match find_audio(std::path::Path::new(&dir), &mut tracks, 0) {
+        Err(e) => Some(e.to_string()),
+        Ok(()) if tracks.is_empty() => Some("no audio files in this folder".into()),
+        Ok(()) => None,
+    };
+    tracks.sort();
+    Ok(FocusTracks { dir, tracks, problem })
+}
+
+#[derive(Serialize)]
+struct FocusChunk {
+    /// Base64 of the bytes from `offset`.
+    data: String,
+    /// Size of the whole file.
+    size: u64,
+}
+
+/// Up to `len` bytes of a focus track from `offset`, as base64. Raw bytes
+/// would reach the Linux webview as a JSON array of numbers, which is huge
+/// and slow; base64 is compact and decodes fast on every platform.
+#[tauri::command]
+fn focus_read(state: State<AppState>, path: String, offset: u64, len: u32) -> CmdResult<FocusChunk> {
+    use base64::Engine;
+    use std::io::{Read, Seek, SeekFrom};
+    let dir = std::fs::canonicalize(with_store(&state, focus_dir)?).map_err(|e| e.to_string())?;
+    let file = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+    if !file.starts_with(&dir) {
+        return Err("not in the focus folder".into());
+    }
+    let read = || -> std::io::Result<FocusChunk> {
+        let mut f = std::fs::File::open(&file)?;
+        let size = f.metadata()?.len();
+        f.seek(SeekFrom::Start(offset))?;
+        let mut buf = Vec::with_capacity(len.min(16 << 20) as usize);
+        f.take(len.min(16 << 20) as u64).read_to_end(&mut buf)?;
+        Ok(FocusChunk { data: base64::engine::general_purpose::STANDARD.encode(&buf), size })
+    };
+    read().map_err(|e| format!("{path}: {e}"))
+}
+
 // ------------------------------------------------------------------ templates
 
 #[tauri::command]
@@ -368,6 +548,8 @@ struct SettingsDto {
     sound: bool,
     /// Desktop only, per device: hide the window when it loses focus.
     hide_on_blur: bool,
+    /// Per device: folder the Focus tab plays music from.
+    focus_dir: String,
 }
 
 /// `local.` = this device only, never synced.
@@ -386,6 +568,7 @@ fn get_settings(state: State<AppState>) -> CmdResult<SettingsDto> {
             quiet_hours: fmt_quiet_hours(v.quiet_hours),
             sound: v.sound,
             hide_on_blur: s.setting(HIDE_ON_BLUR_KEY)?.as_deref() != Some("false"),
+            focus_dir: focus_dir(s)?,
         })
     })
 }
@@ -404,7 +587,8 @@ fn save_settings(state: State<AppState>, settings: SettingsDto) -> CmdResult<()>
             sound: settings.sound,
         }
         .save(s)?;
-        s.set_setting(HIDE_ON_BLUR_KEY, &settings.hide_on_blur.to_string())
+        s.set_setting(HIDE_ON_BLUR_KEY, &settings.hide_on_blur.to_string())?;
+        s.set_setting(FOCUS_DIR_KEY, settings.focus_dir.trim())
     })
 }
 
@@ -481,6 +665,13 @@ mod popup {
     /// Ignore focus flicker (popups, dialogs opening) shorter than this.
     const GRACE: Duration = Duration::from_millis(150);
 
+    pub fn show(app: &AppHandle) {
+        let Some(w) = app.get_webview_window("main") else { return };
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+
     pub fn toggle(app: &AppHandle) {
         let Some(w) = app.get_webview_window("main") else { return };
         let just_hidden = LAST_AUTO_HIDE.lock().ok().and_then(|t| *t).is_some_and(|t| t.elapsed() < Duration::from_millis(600));
@@ -527,7 +718,14 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder
-            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| popup::toggle(app)))
+            .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| match action_from_args(&args) {
+                Some(action) => {
+                    set_launch_action(action);
+                    popup::show(app);
+                    let _ = tauri::Emitter::emit(app, "launch-action", ());
+                }
+                None => popup::toggle(app),
+            }))
             .on_window_event(popup::on_event);
     }
 
@@ -535,6 +733,10 @@ pub fn run() {
         .setup(|app| {
             let store = Store::open(&paths::db_path())?;
             app.manage(AppState(Mutex::new(store)));
+            #[cfg(desktop)]
+            if let Some(action) = action_from_args(&std::env::args().collect::<Vec<_>>()) {
+                set_launch_action(action);
+            }
             #[cfg(target_os = "android")]
             android::ensure_sync();
             Ok(())
@@ -547,6 +749,13 @@ pub fn run() {
             update_day_block,
             delete_day_block,
             get_month,
+            get_activity,
+            week_summary,
+            save_focus_session,
+            move_block,
+            take_launch_action,
+            focus_tracks,
+            focus_read,
             list_templates,
             create_template,
             rename_template,

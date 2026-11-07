@@ -70,8 +70,11 @@ impl Client {
     /// Send queued local changes. Returns how many rows were sent.
     pub fn push(&mut self, store: &Store) -> Result<usize> {
         let mut total = 0;
+        // Tables the server doesn't have yet (schema not updated): their
+        // rows wait in the outbox, everything else still syncs.
+        let mut missing: Vec<&str> = Vec::new();
         loop {
-            let batch = store.sync_pending(PUSH_BATCH)?;
+            let batch = store.sync_pending_except(PUSH_BATCH, &missing)?;
             if batch.is_empty() {
                 return Ok(total);
             }
@@ -93,6 +96,11 @@ impl Client {
                 let req = self.agent.post(&url).set("Prefer", "resolution=merge-duplicates,return=minimal");
                 let req = self.authed(req)?;
                 if let Err(e) = check(req.send_json(Value::Array(rows))).with_context(|| format!("pushing {table}")) {
+                    if table_missing(&e) {
+                        warn_missing(table);
+                        missing.push(spec.name);
+                        continue;
+                    }
                     self.note_auth_error(&e);
                     return Err(e);
                 }
@@ -123,6 +131,10 @@ impl Client {
                 let req = self.authed(req)?;
                 let resp = match check(req.call()).with_context(|| format!("pulling {}", spec.name)) {
                     Ok(r) => r,
+                    Err(e) if table_missing(&e) => {
+                        warn_missing(spec.name);
+                        break;
+                    }
                     Err(e) => {
                         self.note_auth_error(&e);
                         return Err(e);
@@ -142,6 +154,22 @@ impl Client {
             }
         }
         Ok(changed)
+    }
+}
+
+/// PostgREST answers 404 for a table that isn't in the database.
+fn table_missing(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains("(HTTP 404)")
+}
+
+/// Said once per run, not on every sync.
+fn warn_missing(table: &str) {
+    static WARNED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    if let Ok(mut w) = WARNED.lock() {
+        if !w.iter().any(|t| t == table) {
+            w.push(table.to_string());
+            eprintln!("sync: the server has no {table:?} table yet; run supabase/schema.sql again. Other tables still sync.");
+        }
     }
 }
 
